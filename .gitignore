@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.env
+.env.local
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Node.js
+node_modules/
+dist/
+build/
+.npmrc
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker
+docker-compose.override.yml
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Temporary files
+tmp/
+temp/
+
+# SSL certificates
+*.pem
+*.key
+*.crt
+
+# Celery
+*.pid
+*.sock
