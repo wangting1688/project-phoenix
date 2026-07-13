@@ -58,3 +58,7 @@ temp/
 # Celery
 *.pid
 *.sock
+
+# Storage (用户上传素材和生成视频)
+backend/storage/
+
