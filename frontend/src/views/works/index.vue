@@ -67,7 +67,7 @@ import {
   IVideoCamera,
   IVideoPlay,
   ILoading,
-} from '@element-plus/icons-vue'
+} from '@/utils/icons'
 
 const router = useRouter()
 

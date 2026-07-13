@@ -55,25 +55,110 @@
             <el-button size="small" @click="copyScript(scripts[activeScript].content)">
               <el-icon><ICopyDocument /></el-icon> 复制
             </el-button>
-            <el-button size="small" type="primary" @click="goGenerateVideo">
-              生成视频
+            <el-button size="small" type="primary" @click="goGenerateVideo(scripts[activeScript].id)">
+              生成视频方案
             </el-button>
           </div>
         </div>
       </div>
 
       <!-- 视频展示 -->
-      <div v-if="video" class="section">
+      <div v-if="video || composition" class="section">
         <div class="section-header">
           <h3>视频</h3>
         </div>
         <div class="video-card card">
           <div class="video-preview">
             <el-icon :size="48"><IVideoCamera /></el-icon>
-            <span>视频已生成</span>
+            <span>{{ composition ? '视频方案已生成' : '视频已生成' }}</span>
           </div>
+
+          <!-- 视频合成方案 -->
+          <div v-if="composition" class="composition-info">
+            <div class="info-row">
+              <span class="label">时长</span>
+              <span class="value">{{ composition.plan.total_duration }}秒</span>
+            </div>
+            <div class="info-row">
+              <span class="label">分辨率</span>
+              <span class="value">{{ composition.plan.output_format.resolution }} ({{ composition.plan.output_format.aspect_ratio }})</span>
+            </div>
+            <div class="info-row">
+              <span class="label">场景数</span>
+              <span class="value">{{ composition.plan.scene_plan.length }}个</span>
+            </div>
+            <div class="info-row">
+              <span class="label">素材数</span>
+              <span class="value">{{ composition.footage_count }}条</span>
+            </div>
+
+            <!-- 质量评分 -->
+            <div class="quality-section">
+              <div class="quality-header">
+                <span>质量评分</span>
+                <span class="quality-score" :class="{ pass: composition.quality.pass }">
+                  {{ composition.quality.total }}
+                </span>
+              </div>
+              <div class="quality-bars">
+                <div v-for="(label, key) in qualityLabels" :key="key" class="quality-bar">
+                  <span class="bar-label">{{ label }}</span>
+                  <el-progress
+                    :percentage="composition.quality[key]"
+                    :show-text="true"
+                    :stroke-width="8"
+                    :color="getQualityColor(composition.quality[key])"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <!-- TTS配置 -->
+            <div class="info-block">
+              <h4>语音配置</h4>
+              <div class="info-row">
+                <span class="label">音色</span>
+                <span class="value">{{ composition.plan.tts_config.voice }}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">语速</span>
+                <span class="value">{{ composition.plan.tts_config.speed }}x</span>
+              </div>
+            </div>
+
+            <!-- BGM -->
+            <div class="info-block">
+              <h4>背景音乐</h4>
+              <div class="info-row">
+                <span class="label">风格</span>
+                <span class="value">{{ composition.plan.bgm_config.style }}</span>
+              </div>
+              <div class="info-row">
+                <span class="label">音量</span>
+                <span class="value">{{ Math.round(composition.plan.bgm_config.volume * 100) }}%</span>
+              </div>
+            </div>
+
+            <!-- 字幕预览 -->
+            <div v-if="composition.plan.subtitles.length" class="info-block">
+              <h4>字幕预览（前3条）</h4>
+              <div v-for="(s, i) in composition.plan.subtitles.slice(0, 3)" :key="i" class="subtitle-item">
+                <span class="time">{{ s.start }}-{{ s.end }}</span>
+                <span class="text">{{ s.text }}</span>
+              </div>
+            </div>
+
+            <!-- FFmpeg命令 -->
+            <details class="ffmpeg-block">
+              <summary>FFmpeg命令链（{{ composition.plan.ffmpeg_commands.length }}步）</summary>
+              <pre v-for="(cmd, i) in composition.plan.ffmpeg_commands" :key="i" class="cmd">{{ cmd }}</pre>
+            </details>
+          </div>
+
           <div class="video-actions">
-            <el-button type="primary" @click="downloadVideo">下载视频</el-button>
+            <el-button type="primary" :loading="composing" @click="goGenerateVideo">
+              {{ composition ? '重新生成方案' : '生成视频方案' }}
+            </el-button>
             <el-button @click="goPublish">发布方案</el-button>
           </div>
         </div>
@@ -120,23 +205,35 @@ import { ElMessage } from 'element-plus'
 import {
   ILoading, ICopyDocument, IVideoCamera,
   ICheck, IDocument, IVideoPlay, ISetting,
-} from '@element-plus/icons-vue'
+} from '@/utils/icons'
 import {
   getTaskStatus, getTaskResult, getTaskScripts,
   type TaskStatus, type Script, type VideoInfo,
 } from '@/api/creation'
+import { composeVideo, type ComposeResult } from '@/api/video'
 
 const route = useRoute()
 const router = useRouter()
 
 const taskId = Number(route.query.task_id)
+const projectId = ref<number | null>(null)
 const taskStatus = ref<TaskStatus | null>(null)
 const scripts = ref<Script[]>([])
 const video = ref<VideoInfo | null>(null)
 const activeScript = ref(0)
+const composition = ref<ComposeResult | null>(null)
+const composing = ref(false)
 const operationData = ref<any>({
   titles: [], hashtags: [], comment_strategy: [], private_message_guide: '',
 })
+
+const qualityLabels: Record<string, string> = {
+  realism: '真人感',
+  info_value: '信息价值',
+  rhythm: '节奏',
+  subtitle_quality: '字幕质量',
+  risk_safety: '商业风险',
+}
 
 let pollTimer: number | null = null
 
@@ -176,6 +273,7 @@ async function pollStatus() {
     if (result) {
       scripts.value = (result as any).scripts || []
       video.value = (result as any).video || null
+      projectId.value = (result as any).project_id || null
     }
 
     if (status?.status === 'completed') {
@@ -239,12 +337,40 @@ function copyScript(content: string) {
   })
 }
 
-function goGenerateVideo() {
-  ElMessage.info('视频生成功能开发中')
+function goGenerateVideo(scriptId?: number) {
+  if (!taskId) return
+  if (!projectId.value) {
+    ElMessage.error('项目ID未加载，请稍候再试')
+    return
+  }
+  composing.value = true
+  composeVideo(projectId.value, scriptId)
+    .then((res: any) => {
+      composition.value = res as ComposeResult
+      ElMessage.success(`视频方案已生成，质量评分 ${res.quality.total}`)
+    })
+    .catch((err: any) => {
+      const msg = err?.response?.data?.message || err?.detail || '生成失败'
+      ElMessage.error(msg)
+    })
+    .finally(() => {
+      composing.value = false
+    })
+}
+
+function getQualityColor(score: number) {
+  if (score >= 85) return '#67c23a'
+  if (score >= 70) return '#409eff'
+  if (score >= 60) return '#e6a23c'
+  return '#f56c6c'
 }
 
 function downloadVideo() {
-  ElMessage.info('视频下载功能开发中')
+  if (!composition.value) {
+    ElMessage.info('请先生成视频方案')
+    return
+  }
+  ElMessage.info('V1版本：FFmpeg命令已生成，可在后端执行合成')
 }
 
 function goPublish() {
@@ -325,6 +451,89 @@ function goPublish() {
   color: #667eea; border-radius: 12px;
 }
 .video-actions { display: flex; gap: 10px; justify-content: center; }
+
+/* 视频合成方案展示 */
+.composition-info {
+  text-align: left;
+  margin-bottom: 20px;
+  padding: 16px;
+  background: #fafbfc;
+  border-radius: 10px;
+}
+.info-row {
+  display: flex; justify-content: space-between;
+  font-size: 14px; padding: 6px 0;
+  border-bottom: 1px dashed #ebeef5;
+}
+.info-row:last-child { border-bottom: none; }
+.info-row .label { color: #909399; }
+.info-row .value { color: #303133; font-weight: 500; }
+
+.quality-section {
+  margin-top: 16px; padding: 12px;
+  background: #fff; border-radius: 8px;
+  border: 1px solid #ebeef5;
+}
+.quality-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 12px;
+}
+.quality-header span:first-child {
+  font-size: 14px; color: #303133; font-weight: 500;
+}
+.quality-score {
+  font-size: 22px; font-weight: bold; color: #f56c6c;
+  padding: 2px 14px; border-radius: 16px;
+  background: #fef0f0;
+}
+.quality-score.pass {
+  color: #67c23a; background: #f0f9eb;
+}
+.quality-bars { display: flex; flex-direction: column; gap: 8px; }
+.quality-bar {
+  display: flex; align-items: center; gap: 12px;
+}
+.quality-bar .bar-label {
+  font-size: 13px; color: #606266;
+  width: 80px; flex-shrink: 0;
+}
+.quality-bar :deep(.el-progress) { flex: 1; }
+.quality-bar :deep(.el-progress-bar__innerText) { font-size: 11px; }
+
+.info-block {
+  margin-top: 14px; padding: 12px;
+  background: #fff; border-radius: 8px;
+  border: 1px solid #ebeef5;
+}
+.info-block h4 {
+  font-size: 14px; color: #303133; margin-bottom: 8px;
+}
+.subtitle-item {
+  display: flex; gap: 10px; padding: 6px 0;
+  font-size: 13px; color: #606266;
+  border-bottom: 1px dashed #ebeef5;
+}
+.subtitle-item:last-child { border-bottom: none; }
+.subtitle-item .time {
+  color: #909399; font-family: monospace; font-size: 12px;
+  flex-shrink: 0;
+}
+
+.ffmpeg-block {
+  margin-top: 14px; padding: 10px;
+  background: #2d2d2d; border-radius: 8px;
+}
+.ffmpeg-block summary {
+  cursor: pointer; color: #ddd; font-size: 13px;
+  padding: 4px 0;
+}
+.ffmpeg-block summary:hover { color: #fff; }
+.ffmpeg-block .cmd {
+  color: #0f0; font-family: monospace; font-size: 11px;
+  padding: 8px 6px; margin: 4px 0;
+  background: #1a1a1a; border-radius: 4px;
+  white-space: pre-wrap; word-break: break-all;
+}
 
 .operation-card { padding: 20px; }
 .op-section { margin-bottom: 16px; }

@@ -113,7 +113,7 @@ import {
   IFire,
   IVideoPlay,
   IEdit,
-} from '@element-plus/icons-vue'
+} from '@/utils/icons'
 import { createProject } from '@/api/creation'
 
 const route = useRoute()

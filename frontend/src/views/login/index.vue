@@ -7,7 +7,7 @@
       </div>
 
       <el-form
-        ref="loginForm"
+        ref="formRef"
         :model="loginForm"
         :rules="loginRules"
         class="login-form"
@@ -57,7 +57,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { Iphone, ILock } from '@element-plus/icons-vue'
+import { Iphone, ILock } from '@/utils/icons'
 import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
@@ -80,13 +80,13 @@ const loginRules: FormRules = {
   ],
 }
 
-const loginForm = ref<FormInstance>()
+const formRef = ref<FormInstance>()
 const loading = ref(false)
 
 async function handleLogin() {
-  if (!loginForm.value) return
+  if (!formRef.value) return
   try {
-    await loginForm.value.validate()
+    await formRef.value.validate()
     loading.value = true
     await userStore.login(loginForm.phone, loginForm.password)
     ElMessage.success('登录成功')

@@ -134,7 +134,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { IUploadFilled, IFolder, IVideoCamera } from '@element-plus/icons-vue'
+import { IUploadFilled, IFolder, IVideoCamera } from '@/utils/icons'
 import {
   getCategories, createCategory, uploadFootage,
   listFootages, updateFootage, deleteFootage, getSuggestShots,

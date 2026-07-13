@@ -11,8 +11,13 @@ import './assets/styles/main.css'
 
 const app = createApp(App)
 
+// 注册所有图标组件（同时注册原名和 I 前缀版本，兼容模板中的 <IXxx> 写法）
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
+  // 仅对首字母大写的导出添加 I 前缀（过滤 default 导出等）
+  if (/^[A-Z]/.test(key)) {
+    app.component(`I${key}`, component)
+  }
 }
 
 app.use(createPinia())

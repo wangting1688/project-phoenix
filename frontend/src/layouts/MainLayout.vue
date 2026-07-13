@@ -30,7 +30,7 @@ import {
   IFiles,
   IUser,
   IPicture,
-} from '@element-plus/icons-vue'
+} from '@/utils/icons'
 
 const route = useRoute()
 const router = useRouter()

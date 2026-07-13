@@ -102,7 +102,7 @@ import {
   IUser,
   ISetting,
   IHelp,
-} from '@element-plus/icons-vue'
+} from '@/utils/icons'
 import { useUserStore } from '@/stores/user'
 
 const router = useRouter()

@@ -77,7 +77,7 @@
 import { ref, reactive } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
-import { Iphone, ILock, IUser } from '@element-plus/icons-vue'
+import { Iphone, ILock, IUser } from '@/utils/icons'
 import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
