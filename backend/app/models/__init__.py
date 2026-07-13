@@ -9,6 +9,13 @@ from app.models.content import (
     WorkflowTask,
     UserMemory,
 )
+from app.models.footage import Footage, FootageCategory
+from app.models.intelligence import (
+    CreatorProfile,
+    ContentTopic,
+    SuccessCase,
+    RecommendationLog,
+)
 
 __all__ = [
     "User",
@@ -20,4 +27,10 @@ __all__ = [
     "Video",
     "WorkflowTask",
     "UserMemory",
+    "Footage",
+    "FootageCategory",
+    "CreatorProfile",
+    "ContentTopic",
+    "SuccessCase",
+    "RecommendationLog",
 ]
