@@ -34,10 +34,22 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '开始创作', requiresAuth: true },
       },
       {
+        path: 'result',
+        name: 'Result',
+        component: () => import('@/views/result/index.vue'),
+        meta: { title: '创作结果', requiresAuth: true },
+      },
+      {
         path: 'works',
         name: 'Works',
         component: () => import('@/views/works/index.vue'),
         meta: { title: '我的作品', requiresAuth: true },
+      },
+      {
+        path: 'footage',
+        name: 'Footage',
+        component: () => import('@/views/footage/index.vue'),
+        meta: { title: '素材库', requiresAuth: true },
       },
       {
         path: 'profile',

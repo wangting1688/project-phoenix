@@ -29,6 +29,7 @@ import {
   IVideoCamera,
   IFiles,
   IUser,
+  IPicture,
 } from '@element-plus/icons-vue'
 
 const route = useRoute()
@@ -37,6 +38,7 @@ const router = useRouter()
 const tabs = [
   { path: '/home', label: '首页', icon: IHouse },
   { path: '/creation', label: '创作', icon: IVideoCamera },
+  { path: '/footage', label: '素材', icon: IPicture },
   { path: '/works', label: '作品', icon: IFiles },
   { path: '/profile', label: '我的', icon: IUser },
 ]

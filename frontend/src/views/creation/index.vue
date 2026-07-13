@@ -114,6 +114,7 @@ import {
   IVideoPlay,
   IEdit,
 } from '@element-plus/icons-vue'
+import { createProject } from '@/api/creation'
 
 const route = useRoute()
 const router = useRouter()
@@ -191,13 +192,15 @@ async function startCreation() {
 
   creating.value = true
   try {
-    ElMessage.info('正在创建创作项目...')
-    setTimeout(() => {
-      ElMessage.success('创作项目已创建')
-      router.push('/works')
-    }, 1500)
+    const res = await createProject(selectedMethod.value, finalTopic)
+    ElMessage.success('创作项目已创建')
+    router.push({
+      path: '/result',
+      query: { task_id: (res as any).task_id },
+    })
   } catch (error) {
     console.error('创建失败:', error)
+    ElMessage.error('创建失败')
   } finally {
     creating.value = false
   }
