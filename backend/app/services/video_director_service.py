@@ -15,6 +15,7 @@ TASK-016.3A.6：AI剪辑素材编排层
 import random
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
+from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models import (
     AssetSegment,
@@ -68,8 +69,14 @@ class VideoDirectorService:
         "engagement": 0.20,   # 用户互动 20%
     }
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db: Optional[Session] = None):
+        # 支持从 API 层 Depends(get_db) 注入, 消除 request 内嵌套 SessionLocal 引发的 sqlite 单写者锁
+        if db is not None:
+            self.db = db
+            self._owns_db = False
+        else:
+            self.db = SessionLocal()
+            self._owns_db = True
         self.enhancement = DirectorEnhancementService(db=self.db)
 
     # ==================== 核心功能：生成剪辑方案 ====================
@@ -757,4 +764,6 @@ class VideoDirectorService:
         }
 
     def close(self):
-        self.db.close()
+        # 仅当本 service 自己创建的 session 才 close, 注入的 db 生命周期由外部管理
+        if getattr(self, '_owns_db', True):
+            self.db.close()

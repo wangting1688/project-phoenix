@@ -8,9 +8,11 @@ TASK-016.3A.6：AI剪辑素材编排层
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 from typing import Optional, List, Dict, Any
 
 from app.api.deps import get_current_user
+from app.core.database import get_db
 from app.services.video_director_service import VideoDirectorService
 from app.services.director_enhancement_service import DirectorEnhancementService
 
@@ -40,7 +42,8 @@ class UpdatePlanStatusRequest(BaseModel):
 @router.post("/generate-plan")
 async def generate_edit_plan(
     request: GeneratePlanRequest,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
     AI导演生成剪辑方案
@@ -54,7 +57,7 @@ async def generate_edit_plan(
     - TASK-016.3A.7: 自动生成补拍任务（闭环）
     - 预测完播率/转化率
     """
-    service = VideoDirectorService()
+    service = VideoDirectorService(db=db)
     try:
         plan = service.generate_edit_plan(
             user_id=current_user.id,
@@ -354,14 +357,15 @@ async def get_shooting_tasks_status(
 @router.post("/plans/{plan_id}/regenerate")
 async def regenerate_plan(
     plan_id: int,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
     补拍完成后重新生成方案
 
     闭环：补拍完成 → 重新分析素材 → 重新匹配 → 更新方案
     """
-    director_service = VideoDirectorService()
+    director_service = VideoDirectorService(db=db)
     try:
         old_plan = director_service.get_edit_plan(plan_id)
         if not old_plan:
@@ -369,10 +373,8 @@ async def regenerate_plan(
         if old_plan.user_id != current_user.id:
             raise HTTPException(status_code=403, detail="无权访问")
 
-        # 检查补拍任务是否完成
-        enhancement = DirectorEnhancementService()
-        task_status = enhancement.check_shooting_tasks_completed(plan_id)
-        enhancement.close()
+        # 复用同一 db (director_service 内部同 session), 消除 request 内嵌套 session
+        task_status = director_service.enhancement.check_shooting_tasks_completed(plan_id)
 
         if not task_status.get("can_regenerate"):
             return {
