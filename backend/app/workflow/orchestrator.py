@@ -223,7 +223,10 @@ class WorkflowOrchestrator:
             self.db.commit()
 
     def _build_error_result(self, step_result: Dict[str, Any]) -> Dict[str, Any]:
+        # 修复历史 bug: step 内部 catch 后返回 success=False 时,
+        # 只 build 返回不 mark failed 会让 project.workflow_status 卡在中间态 (如 reviewing)
         self.states["error"] = step_result["error"]
+        self._mark_failed(step_result["error"])
         return self._build_final_result()
 
     def _build_final_result(self) -> Dict[str, Any]:
