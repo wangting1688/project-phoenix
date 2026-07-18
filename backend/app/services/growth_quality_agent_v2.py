@@ -346,7 +346,7 @@ class GrowthQualityAgentV2:
 
     def _evaluate_platform_fit_v2(self, plan: VideoEditPlan) -> Dict[str, Any]:
         """评估平台适配度 V2"""
-        platform = plan.platform or "wechat_video"
+        platform = getattr(plan, "platform", None) or "wechat_video"
         script_content = plan.script_content or ""
         duration = plan.total_duration or 60
 

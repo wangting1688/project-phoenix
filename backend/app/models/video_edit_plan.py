@@ -154,6 +154,9 @@ class VideoEditSegment(Base, BaseModel):
     # shake - 震动
     # blur - 模糊
 
+    # 情绪/特效元数据（历史遗留：4 处 service 读写此字段）
+    effect_config = Column(JSON, nullable=True)
+
     # AI推荐原因
     reason = Column(Text, nullable=True)
     # "该主播前三秒停留率最高"

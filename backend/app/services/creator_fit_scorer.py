@@ -82,8 +82,8 @@ class CreatorFitScorer:
 
         segments = self._get_segments(plan_id)
 
-        if not creator_id and plan.creator_id:
-            creator_id = plan.creator_id
+        if not creator_id:
+            creator_id = getattr(plan, "creator_id", None) or plan.user_id
 
         if not creator_id:
             return {"success": True, "score": 70, "message": "无主播信息，使用默认分"}
@@ -241,7 +241,7 @@ class CreatorFitScorer:
 
     def _get_creator_strategy(self, creator_id: int):
         return self.db.query(CreatorStrategyProfile).filter(
-            CreatorStrategyProfile.creator_id == creator_id
+            CreatorStrategyProfile.user_id == creator_id
         ).first()
 
     def _get_user(self, user_id: int):
