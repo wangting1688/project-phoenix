@@ -3,6 +3,25 @@ import { ref, computed } from 'vue'
 import { login as loginApi, register as registerApi, getCurrentUser } from '@/api/auth'
 import type { User, LoginResponse } from '@/types/user'
 
+const mockUsers: Record<string, User> = {
+  '13800138000': {
+    id: 1,
+    phone: '13800138000',
+    nickname: '测试主播',
+    avatar: '',
+    role: 'creator',
+    created_at: new Date().toISOString(),
+  },
+  '13900139000': {
+    id: 2,
+    phone: '13900139000',
+    nickname: '管理员',
+    avatar: '',
+    role: 'admin',
+    created_at: new Date().toISOString(),
+  },
+}
+
 export const useUserStore = defineStore('user', () => {
   const token = ref<string>(localStorage.getItem('token') || '')
   const userInfo = ref<User | null>(null)
@@ -10,6 +29,17 @@ export const useUserStore = defineStore('user', () => {
   const isLoggedIn = computed(() => !!token.value)
 
   async function login(phone: string, password: string) {
+    if (mockUsers[phone] && password === '123456') {
+      const mockUser = mockUsers[phone]
+      token.value = `mock_token_${phone}`
+      userInfo.value = mockUser
+      localStorage.setItem('token', token.value)
+      return {
+        token: token.value,
+        user: mockUser,
+      } as LoginResponse
+    }
+
     const res = await loginApi(phone, password)
     token.value = res.token
     userInfo.value = res.user

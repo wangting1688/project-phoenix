@@ -30,3 +30,5 @@ export const IHelp = (ElementPlusIconsVue as any).Help
 export const IHouse = (ElementPlusIconsVue as any).House
 export const IFiles = (ElementPlusIconsVue as any).Files
 export const IPicture = (ElementPlusIconsVue as any).Picture
+export const ISparkles = (ElementPlusIconsVue as any).Sparkles
+export const IStar = (ElementPlusIconsVue as any).Star

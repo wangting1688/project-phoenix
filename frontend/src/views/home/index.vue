@@ -16,6 +16,17 @@
 
     <div class="page-container">
       <div class="quick-actions">
+        <div class="card action-card highlight" @click="goToContentHub">
+          <div class="action-icon content-hub">
+            <el-icon :size="32"><ISparkles /></el-icon>
+          </div>
+          <div class="action-info">
+            <h3>☀️ AI内容中心</h3>
+            <p>今天适合创作什么？AI为你推荐</p>
+          </div>
+          <el-icon :size="20" class="arrow"><IArrowRight /></el-icon>
+        </div>
+
         <div class="card action-card" @click="goToCreation('recommend')">
           <div class="action-icon recommend">
             <el-icon :size="32"><IFire /></el-icon>
@@ -27,13 +38,13 @@
           <el-icon :size="20" class="arrow"><IArrowRight /></el-icon>
         </div>
 
-        <div class="card action-card" @click="goToCreation('viral_analysis')">
+        <div class="card action-card" @click="goToViralAnalysis">
           <div class="action-icon viral">
             <el-icon :size="32"><IVideoPlay /></el-icon>
           </div>
           <div class="action-info">
-            <h3>爆款视频解析</h3>
-            <p>复制链接生成原创方案</p>
+            <h3>🔍 AI爆款逆向工程</h3>
+            <p>输入链接，AI分析为什么它成功</p>
           </div>
           <el-icon :size="20" class="arrow"><IArrowRight /></el-icon>
         </div>
@@ -115,6 +126,7 @@ import {
   IEdit,
   IArrowRight,
   IVideoCamera,
+  ISparkles,
 } from '@/utils/icons'
 import { useUserStore } from '@/stores/user'
 
@@ -150,6 +162,14 @@ function loadRecentWorks() {
 
 function goToCreation(type: string) {
   router.push({ path: '/creation', query: { type } })
+}
+
+function goToContentHub() {
+  router.push('/content-hub')
+}
+
+function goToViralAnalysis() {
+  router.push('/viral-analysis')
 }
 
 function selectRecommend(item: { topic: string }) {
@@ -243,6 +263,15 @@ function getStatusText(status: string) {
 
 .action-icon.custom {
   background: linear-gradient(135deg, #00d2d3, #01a3a4);
+}
+
+.action-icon.content-hub {
+  background: linear-gradient(135deg, #f093fb, #f5576c);
+}
+
+.action-card.highlight {
+  border: 2px solid #f5576c;
+  background: linear-gradient(135deg, #fff5f5, #fff);
 }
 
 .action-info {
