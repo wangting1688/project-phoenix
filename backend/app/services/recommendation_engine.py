@@ -19,12 +19,12 @@ class RecommendationEngine:
     def __init__(self, user_id: int = None):
         self.db = SessionLocal()
         self.user_id = user_id
-        self.weights = self._get_weights()
         self.creator_profile = None
         self.creator_preference = None
         if user_id:
             self.creator_profile = self._load_creator_profile()
             self.creator_preference = self._load_creator_preference()
+        self.weights = self._get_weights()
 
     def _get_weights(self) -> Dict[str, float]:
         """获取评分权重（优先用户个性化，其次全局配置，最后默认）"""

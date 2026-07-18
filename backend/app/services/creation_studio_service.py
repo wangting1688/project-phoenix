@@ -54,6 +54,9 @@ class CreationStudioService:
         config: Optional[Dict[str, Any]] = None,
     ) -> CreationSession:
         """创建创作会话"""
+        merged_config = dict(config or {})
+        if topic and "topic" not in merged_config:
+            merged_config["topic"] = topic
         session = CreationSession(
             user_id=user_id,
             source_type=source_type,
@@ -61,7 +64,7 @@ class CreationStudioService:
             workflow_state="init",
             current_step="config",
             status="active",
-            config=config or {},
+            config=merged_config,
         )
         self.db.add(session)
         self.db.commit()
@@ -93,13 +96,15 @@ class CreationStudioService:
         if not session:
             raise ValueError("创作会话不存在")
 
-        session.config = {
+        merged = dict(session.config or {})
+        merged.update({
             "style": style,
             "duration": duration,
             "tone": tone,
             "style_name": self.STYLE_TEMPLATES.get(style, {}).get("name", style),
             "tone_name": self.TONE_OPTIONS.get(tone, tone),
-        }
+        })
+        session.config = merged
         session.current_step = "planning"
         self.db.commit()
         self.db.refresh(session)

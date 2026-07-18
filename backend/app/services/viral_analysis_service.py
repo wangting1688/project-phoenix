@@ -86,7 +86,7 @@ class ViralAnalysisService:
                 "gender": creator_profile.gender,
                 "style": creator_profile.style,
                 "good_topics": creator_profile.good_topics or [],
-                "category": creator_profile.category,
+                "category": getattr(creator_profile, "category", None),
             }
 
         original_title = self._generate_original_title(analysis, creator_info)
@@ -249,7 +249,8 @@ class ViralAnalysisService:
         if good_topics and any(topic in category for topic in good_topics):
             score += 20
 
-        if profile.category and profile.category in analysis.get("commercial_fit", {}).get("fit_for", []):
+        profile_category = getattr(profile, "category", None)
+        if profile_category and profile_category in analysis.get("commercial_fit", {}).get("fit_for", []):
             score += 15
 
         return min(100, score + random.randint(0, 10))
