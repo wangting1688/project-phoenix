@@ -111,3 +111,49 @@
 | 后端 9 条关键 GET 冒烟（`auth/me`、`content-hub/today`、`creator-profile`、`creation-studio/templates`、`creation-studio/sessions`、`asset-collection/tasks`、`video-director/plans`、`video-production/jobs`、`agent-gateway/tools`） | ✓ 9/9 均 200 |
 
 **结论**：CSS 按需改动无功能/样式回归，`ElMessage` / `ElMessageBox` 命令式 API 与模板组件样式各自到位，可继续下一批次。
+
+### 5.6 SessionLocal 治理首条链落地（发现 08）
+
+`6265183` 提交，**外科式治理**冒烟报告发现 08 首条痛点链 `video-director/generate-plan`（历史曾报 `sqlite database is locked`）。
+
+#### 治理边界
+
+- **只改**：`generate-plan` + `regenerate_plan` 两条链（曾报锁 / 内部嵌套开 session）
+- **不动**：`video_director.py` 其余 6 处 GET 路由（无病灶 + 遵守精准修改）
+- **不动**：其余 39 个 service 的 `SessionLocal()`（等痛点触发再切）
+
+#### 关键机制
+
+`VideoDirectorService.__init__` 增加 `Optional[Session]` 参数 + `_owns_db` 标记：
+- 传入 db → 复用 + `close()` 不误关外部 session
+- 不传 db → fallback `SessionLocal()`，向后兼容全部未改造的调用点
+
+`regenerate_plan` 里 `DirectorEnhancementService()` 独立开 session 改为复用 `director_service.enhancement`，request 内嵌套 session 消除。
+
+#### 验证
+
+| 验证类型 | 结果 |
+|---|---|
+| 单元 · fallback 路径（不传 db） | ✓ `_owns_db=True`, enhancement 挂上 |
+| 单元 · 注入路径（传 db） | ✓ `_owns_db=False`, `service.db is db`, `enhancement.db is service.db` |
+| 单元 · `close()` 不误关外部 db | ✓ close 后 bind 仍活 |
+| 接口 · `POST generate-plan` | ✓ `success=True`, 产出 `plan#5` |
+| 回归 · `GET /plans` 未改造路由 | ✓ 200 |
+
+#### 复用模板（留给剩余 39 个 service）
+
+```python
+def __init__(self, db: Optional[Session] = None):
+    if db is not None:
+        self.db = db
+        self._owns_db = False
+    else:
+        self.db = SessionLocal()
+        self._owns_db = True
+
+def close(self):
+    if getattr(self, '_owns_db', True):
+        self.db.close()
+```
+
+API 层加 `db: Session = Depends(get_db)` → `Service(db=db)`。
