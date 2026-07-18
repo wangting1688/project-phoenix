@@ -12,7 +12,7 @@ TASK-016.3B.4：AI Growth Review Memory
 6. 集成三版本策略建议
 """
 
-from typing import List, Dict, Any
+from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
@@ -73,14 +73,22 @@ class GrowthQualityAgentV2:
         "根治", "治愈", "神奇", "立刻", "马上", "永久", "绝对", "买3送1",
     ]
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db: Optional[Session] = None):
+        # 支持 API 层 Depends(get_db) 注入, 内嵌 CreatorFitScorer 共享同一 session
+        if db is not None:
+            self.db = db
+            self._owns_db = False
+        else:
+            self.db = SessionLocal()
+            self._owns_db = True
         self.gateway = AgentToolGateway()
-        self.creator_fit_scorer = CreatorFitScorer()
+        self.creator_fit_scorer = CreatorFitScorer(db=self.db)
 
     def close(self):
-        self.db.close()
+        # 只关自建 session; CreatorFitScorer 共享同一 db, 由 self.creator_fit_scorer.close() 走 _owns_db 判断兜住
         self.creator_fit_scorer.close()
+        if getattr(self, '_owns_db', True):
+            self.db.close()
 
     def assess_growth_quality_v2(self, plan_id: int, version_type: str = "growth") -> Dict[str, Any]:
         """评估增长质量 V2"""

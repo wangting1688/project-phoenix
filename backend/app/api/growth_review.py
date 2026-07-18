@@ -7,6 +7,8 @@ TASK-016.3B.4：AI Growth Review Memory
 """
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.core.database import get_db
 from typing import Optional, List, Dict, Any
 
 from app.api.deps import get_current_user
@@ -34,9 +36,9 @@ async def assess_growth_quality_v2(plan_id: int, version_type: str = "growth", c
 
 
 @router.post("/plans/{plan_id}/generate-report")
-async def generate_review_report(plan_id: int, version_type: str = "growth", current_user = Depends(get_current_user)):
+async def generate_review_report(plan_id: int, version_type: str = "growth", current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """生成增长复盘报告"""
-    agent = GrowthQualityAgentV2()
+    agent = GrowthQualityAgentV2(db=db)
     try:
         result = agent.generate_growth_review_report(plan_id, version_type)
         if result["success"]:

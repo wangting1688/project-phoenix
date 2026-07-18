@@ -9,7 +9,7 @@ TASK-016.3B.4：AI Growth Review Memory
 3. 避免"爆款结构对但主播演不出来"的问题
 """
 
-from typing import List, Dict, Any
+from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
@@ -68,11 +68,18 @@ class CreatorFitScorer:
         "high": ["young", "energetic", "creative", "lively"],
     }
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db: Optional[Session] = None):
+        # 支持 API 层 Depends(get_db) 注入, 消除嵌套 SessionLocal 引发的 sqlite 单写者锁
+        if db is not None:
+            self.db = db
+            self._owns_db = False
+        else:
+            self.db = SessionLocal()
+            self._owns_db = True
 
     def close(self):
-        self.db.close()
+        if getattr(self, '_owns_db', True):
+            self.db.close()
 
     def score_creator_fit(self, plan_id: int, creator_id: int = None) -> Dict[str, Any]:
         """评分主播适配度"""
