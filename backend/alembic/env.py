@@ -5,15 +5,23 @@ from sqlalchemy import pool
 
 from alembic import context
 
+from app.core.config import settings
 from app.core.database import Base
-from app.models import *
+from app.models import *  # noqa: F401,F403  # 触发模型注册到 metadata
 
 config = context.config
+
+# 从 settings.DATABASE_URL 注入连接串，避免 alembic.ini 与 .env 双头维护
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+
+
+def _is_sqlite() -> bool:
+    return settings.DATABASE_URL.startswith("sqlite")
 
 
 def run_migrations_offline() -> None:
@@ -23,6 +31,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        render_as_batch=_is_sqlite(),
     )
 
     with context.begin_transaction():
@@ -42,6 +51,7 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             compare_type=True,
             compare_server_default=True,
+            render_as_batch=_is_sqlite(),
         )
 
         with context.begin_transaction():
