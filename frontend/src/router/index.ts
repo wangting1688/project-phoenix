@@ -82,12 +82,6 @@ const routes: RouteRecordRaw[] = [
         meta: { title: 'AI爆款逆向工程', requiresAuth: true },
       },
       {
-        path: 'video-production',
-        name: 'VideoProduction',
-        component: () => import('@/views/videoProduction/index.vue'),
-        meta: { title: '视频项目', requiresAuth: true },
-      },
-      {
         path: 'shooting-assistant',
         name: 'ShootingAssistant',
         component: () => import('@/views/shootingAssistant/index.vue'),

@@ -19,7 +19,6 @@ from app.api.asset_intelligence import router as asset_intelligence_router
 from app.api.asset_segment import router as asset_segment_router
 from app.api.video_director import router as video_director_router
 from app.api.director_learning import router as director_learning_router
-from app.api.video_production import router as video_production_router
 from app.api.agent_gateway import router as agent_gateway_router
 from app.api.production_execution import router as production_execution_router
 from app.api.growth_quality import router as growth_quality_router
@@ -49,7 +48,6 @@ api_router.include_router(asset_intelligence_router)
 api_router.include_router(asset_segment_router)
 api_router.include_router(video_director_router)
 api_router.include_router(director_learning_router)
-api_router.include_router(video_production_router)
 api_router.include_router(agent_gateway_router)
 api_router.include_router(production_execution_router)
 api_router.include_router(growth_quality_router)
