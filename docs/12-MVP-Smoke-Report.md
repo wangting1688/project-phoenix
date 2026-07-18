@@ -157,3 +157,30 @@ def close(self):
 ```
 
 API 层加 `db: Session = Depends(get_db)` → `Service(db=db)`。
+
+### 5.7 SessionLocal 治理进度看板（3/40 已治理）
+
+| # | 治理链路 | commit | 涉及 service（内嵌关系） |
+|---|---|---|---|
+| 1 | `video-director/generate-plan` + `regenerate` | `6265183` | `VideoDirectorService` → `DirectorEnhancementService` |
+| 2 | `growth-review/generate-report` | `29e03f4` | `GrowthQualityAgentV2` → `CreatorFitScorer` |
+| 3 | `viral-analysis/{id}/generate` | `049811e` | `ViralAnalysisService` → `PromptService` |
+
+**已跑通的复用模板**（`docs/12-MVP-Smoke-Report.md` 5.6 节）适用剩余 37 个 service，每条链约 1 小时。
+
+#### 5.7 冒烟（viral-analysis 第 3 条链）
+
+| 步骤 | 结果 |
+|---|---|
+| `POST /viral-analysis/create` | ✓ 200 `session_id=3` |
+| `POST /viral-analysis/3/analyze`（未改造，走 fallback） | ✓ 200 |
+| `POST /viral-analysis/3/generate`（治理链） | ✓ 200 `success=True`, 返回 `opportunity_id` |
+| `GET /viral-analysis/3`（回归未改造） | ✓ 200 |
+| 单元四重：fallback / 注入 / 内嵌共享 / close 不误关 | ✓ 全绿 |
+
+#### 未治理链路优先级（等痛点触发再切）
+
+- `growth-review/three-versions`（`ThreeVersionProductionService`）— 有内嵌 service 风险
+- `production_repair_agent._repair_hook_weak` — 走 LLM，请求内会长时间持锁
+- `creation-studio/generate` — `CreationStudioService`（重路径）
+- 其余 ~34 个 service 无嵌套或非请求路径，暂无锁风险
