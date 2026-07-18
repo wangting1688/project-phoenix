@@ -16,10 +16,12 @@ export const IUserFilled = (ElementPlusIconsVue as any).UserFilled
 export const IUploadFilled = (ElementPlusIconsVue as any).UploadFilled
 export const IFolder = (ElementPlusIconsVue as any).Folder
 export const IVideoCamera = (ElementPlusIconsVue as any).VideoCamera
-export const IFire = (ElementPlusIconsVue as any).Fire
+// element-plus icons 无 Fire，用 Lightning 替代（火焰形状最贴近）
+export const IFire = (ElementPlusIconsVue as any).Lightning
 export const IVideoPlay = (ElementPlusIconsVue as any).VideoPlay
 export const IEdit = (ElementPlusIconsVue as any).Edit
 export const IArrowRight = (ElementPlusIconsVue as any).ArrowRight
+export const IArrowDown = (ElementPlusIconsVue as any).ArrowDown
 export const ILoading = (ElementPlusIconsVue as any).Loading
 export const ICopyDocument = (ElementPlusIconsVue as any).CopyDocument
 export const ICheck = (ElementPlusIconsVue as any).Check
@@ -30,5 +32,9 @@ export const IHelp = (ElementPlusIconsVue as any).Help
 export const IHouse = (ElementPlusIconsVue as any).House
 export const IFiles = (ElementPlusIconsVue as any).Files
 export const IPicture = (ElementPlusIconsVue as any).Picture
-export const ISparkles = (ElementPlusIconsVue as any).Sparkles
+// element-plus icons 无 Sparkles，用 MagicStick 替代（AI/魔法语义）
+export const ISparkles = (ElementPlusIconsVue as any).MagicStick
 export const IStar = (ElementPlusIconsVue as any).Star
+export const IRefresh = (ElementPlusIconsVue as any).Refresh
+// element-plus icons 只有单数 Scissor
+export const IScissors = (ElementPlusIconsVue as any).Scissor
