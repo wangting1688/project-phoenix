@@ -19,8 +19,32 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.models import User
+from app.models import User, VideoScriptTemplate
 from app.core.security import get_password_hash
+
+
+def _seed_video_script_templates(db):
+    """从 app/data/video_script_templates_seed.json 载入预置模板"""
+    import json
+    from pathlib import Path
+
+    seed_path = Path(__file__).parent / "app" / "data" / "video_script_templates_seed.json"
+    if not seed_path.exists():
+        print(f"[skip] 模板种子文件不存在: {seed_path}")
+        return
+
+    with seed_path.open(encoding="utf-8") as f:
+        items = json.load(f)
+
+    inserted = 0
+    for item in items:
+        exists = db.query(VideoScriptTemplate).filter(VideoScriptTemplate.name == item["name"]).first()
+        if exists:
+            continue
+        template = VideoScriptTemplate(**item)
+        db.add(template)
+        inserted += 1
+    print(f"载入视频脚本模板: 新增 {inserted} / 共 {len(items)}")
 
 
 def init_db():
@@ -53,6 +77,10 @@ def init_db():
             print(f"创建用户: {user_data['phone']}")
 
         db.commit()
+
+        _seed_video_script_templates(db)
+        db.commit()
+
         print("\n初始化完成！")
         print("=" * 40)
         print("本地测试账号（仅 DEBUG 环境）：")

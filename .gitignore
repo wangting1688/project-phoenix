@@ -54,6 +54,7 @@ coverage.xml
 
 # Database
 *.db
+phoenix.db.legacy.*
 *.sqlite
 *.sqlite3
 db.sqlite3
