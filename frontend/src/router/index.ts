@@ -64,6 +64,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '我的作品', requiresAuth: true },
       },
       {
+        path: 'data-entry',
+        name: 'DataEntry',
+        component: () => import('@/views/dataEntry/index.vue'),
+        meta: { title: '数据登记', requiresAuth: true },
+      },
+      {
         path: 'footage',
         name: 'Footage',
         component: () => import('@/views/footage/index.vue'),

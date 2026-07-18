@@ -3,6 +3,13 @@
     <div class="page-header">
       <h2>我的作品</h2>
       <p>查看你创作的所有视频</p>
+      <el-button
+        class="header-action"
+        size="small"
+        @click="$router.push('/data-entry')"
+      >
+        📊 数据登记
+      </el-button>
     </div>
 
     <div class="page-container">
@@ -134,6 +141,15 @@ function viewWork(work: { id: number }) {
 .page-header p {
   font-size: 14px;
   opacity: 0.9;
+}
+
+.page-header {
+  position: relative;
+}
+.header-action {
+  position: absolute;
+  top: 16px;
+  right: 16px;
 }
 
 .page-container {

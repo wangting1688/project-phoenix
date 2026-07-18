@@ -201,3 +201,35 @@ class IngestService:
             .limit(limit)
             .all()
         )
+
+    # ==================== 视频列表 ====================
+
+    def list_videos(self, user_id: int, limit: int = 50) -> List[Dict[str, Any]]:
+        """当前用户的 publish_records + 关联 master.title 平铺返回"""
+        rows = (
+            self.db.query(VideoPublishRecord, VideoMasterContent)
+            .join(VideoMasterContent, VideoMasterContent.id == VideoPublishRecord.video_id)
+            .filter(VideoPublishRecord.user_id == user_id)
+            .order_by(VideoPublishRecord.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "publish_record_id": r.id,
+                "video_master_id": m.id,
+                "title": m.title,
+                "platform": r.platform,
+                "publish_url": r.publish_url,
+                "publish_status": r.publish_status,
+                "views": r.views or 0,
+                "likes": r.likes or 0,
+                "comments": r.comments or 0,
+                "favorites": r.favorites or 0,
+                "shares": r.shares or 0,
+                "private_message_count": r.private_message_count or 0,
+                "data_updated_at": r.data_updated_at.isoformat() if r.data_updated_at else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r, m in rows
+        ]
