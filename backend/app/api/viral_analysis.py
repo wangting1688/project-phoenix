@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.core.database import get_db
 from pydantic import BaseModel
 from typing import Optional
 
@@ -69,10 +71,11 @@ async def get_analysis_result(
 @router.post("/{session_id}/generate")
 async def generate_opportunity(
     session_id: int,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """生成原创方案（转化为Content Opportunity）"""
-    service = ViralAnalysisService()
+    service = ViralAnalysisService(db=db)
     try:
         result = service.generate_opportunity(session_id)
         return {"success": True, "data": result}

@@ -2,6 +2,7 @@ from typing import Dict, Any, Optional
 import re
 import random
 
+from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models import ViralAnalysisSession, ViralPattern, ContentOpportunity, CreatorProfile
 from app.services.ai_service import AIService
@@ -11,10 +12,16 @@ from app.services.prompt_service import PromptService
 class ViralAnalysisService:
     """AI爆款逆向工程服务 - 拆解爆款成功因素，生成原创机会"""
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db: Optional[Session] = None):
+        # 支持 API 层 Depends(get_db) 注入, 内嵌 PromptService 共享同一 session
+        if db is not None:
+            self.db = db
+            self._owns_db = False
+        else:
+            self.db = SessionLocal()
+            self._owns_db = True
         self.ai_service = AIService()
-        self.prompt_service = PromptService()
+        self.prompt_service = PromptService(db=self.db)
 
     def create_analysis_session(self, user_id: int, video_url: str) -> ViralAnalysisSession:
         """创建分析会话"""
@@ -308,5 +315,7 @@ class ViralAnalysisService:
         self.db.commit()
 
     def close(self):
-        self.db.close()
+        # 先关内嵌 (走 _owns_db 判断兜住), 再按 _owns_db 关自建 db
         self.prompt_service.close()
+        if getattr(self, '_owns_db', True):
+            self.db.close()

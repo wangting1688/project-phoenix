@@ -10,8 +10,14 @@ from app.models import PromptTemplate
 class PromptService:
     PROMPT_DIR = os.path.join(os.path.dirname(__file__), "..", "prompts")
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db: Optional[Session] = None):
+        # 支持 API 层 Depends(get_db) 注入, 消除嵌套 SessionLocal
+        if db is not None:
+            self.db = db
+            self._owns_db = False
+        else:
+            self.db = SessionLocal()
+            self._owns_db = True
 
     def load_prompt(self, prompt_name: str) -> str:
         db_prompt = self.db.query(PromptTemplate).filter(
@@ -120,4 +126,5 @@ class PromptService:
         return True
 
     def close(self):
-        self.db.close()
+        if getattr(self, '_owns_db', True):
+            self.db.close()
