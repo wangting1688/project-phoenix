@@ -414,16 +414,21 @@ class ProductionRepairAgent:
             return {"success": False, "error": "导演方案不存在"}
 
         try:
+            # VideoEditPlan 不承载产品维度，回退空串仅影响 prompt 拼接语义，不破坏调用
+            product_name = getattr(plan, "product_name", None) or ""
+            product_category = getattr(plan, "product_category", None) or ""
             new_hook = self.gateway.call_tool(
                 "llm_completion",
-                prompt=f"请为以下产品生成一个更吸引人的3秒开头文案，要求：\n1. 痛点直击\n2. 制造悬念\n3. 引发好奇\n\n产品：{plan.product_name or ''}\n产品类别：{plan.product_category or ''}\n原文案：{plan.script_content[:100] if plan.script_content else ''}",
+                prompt=f"请为以下产品生成一个更吸引人的3秒开头文案，要求：\n1. 痛点直击\n2. 制造悬念\n3. 引发好奇\n\n产品：{product_name}\n产品类别：{product_category}\n原文案：{plan.script_content[:100] if plan.script_content else ''}",
                 max_tokens=50,
             )
 
             if new_hook.get("success"):
                 new_content = new_hook["data"].get("content", "") + (plan.script_content[100:] if plan.script_content else "")
                 plan.script_content = new_content
-                plan.hook_score = 85
+                # hook_score 非 VideoEditPlan 列；映射到 director_score 语义不对，改为可选写入
+                if hasattr(plan, "hook_score"):
+                    plan.hook_score = 85
                 self.db.commit()
                 return {"success": True, "data": {"new_hook": new_content[:50]}}
 

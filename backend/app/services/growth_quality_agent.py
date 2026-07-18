@@ -110,7 +110,8 @@ class GrowthQualityAgent:
         if not hook_segment:
             return 30
 
-        hook_content = hook_segment.script_content or ""
+        # 段落文案落在 subtitle_text，历史误写为 script_content
+        hook_content = hook_segment.subtitle_text or ""
         hook_duration = hook_segment.duration or 0
 
         if hook_duration >= 2.5 and hook_duration <= 4.0:
@@ -196,7 +197,8 @@ class GrowthQualityAgent:
         char_count = len(script_content)
         chars_per_second = char_count / duration if duration > 0 else 0
 
-        platform = plan.platform or "wechat_video"
+        # VideoEditPlan 是内容级实体，不承载平台维度；平台落 VideoPublishRecord
+        platform = getattr(plan, "platform", None) or "wechat_video"
         ideal_ranges = {
             "douyin": (4, 6),
             "wechat_video": (3, 5),
