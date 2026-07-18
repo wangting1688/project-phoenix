@@ -112,3 +112,22 @@ class UserMemory(Base, BaseModel):
     weight = Column(DECIMAL(5, 4), default=0.5)
 
     user = relationship("User", back_populates="memory")
+
+
+class CreationSession(Base, BaseModel):
+    """创作会话表 - 追踪创作过程，支持断点续作"""
+    __tablename__ = "creation_sessions"
+
+    user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    source_type = Column(String(50), index=True)
+    opportunity_id = Column(Integer, ForeignKey("content_opportunities.id"), nullable=True)
+    project_id = Column(Integer, ForeignKey("content_projects.id"), nullable=True)
+    workflow_state = Column(String(50), default="init")
+    current_step = Column(String(50), default="planning")
+    script_version = Column(Integer, default=1)
+    status = Column(String(50), default="active", index=True)
+    config = Column(JSON, nullable=True)
+    result = Column(JSON, nullable=True)
+
+    def __repr__(self):
+        return f"<CreationSession(user_id={self.user_id}, status={self.status}, step={self.current_step})>"

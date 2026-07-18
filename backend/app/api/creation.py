@@ -6,7 +6,7 @@ import threading
 from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models import User, ContentProject, WorkflowTask
-from app.workflow.content_workflow import ContentCreationWorkflow
+from app.workflow.orchestrator import WorkflowOrchestrator
 from app.schemas import (
     ContentProjectCreate,
     ContentProjectResponse,
@@ -50,8 +50,8 @@ def create_project(
 
     def run_workflow_background():
         try:
-            workflow = ContentCreationWorkflow(project.id, project_in.topic)
-            workflow.execute()
+            orchestrator = WorkflowOrchestrator(project.id, project_in.topic)
+            orchestrator.execute()
         except Exception as e:
             print(f"Workflow error: {e}")
 
