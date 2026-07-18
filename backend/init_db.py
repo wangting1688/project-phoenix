@@ -1,8 +1,15 @@
 """
-数据库初始化脚本 - 创建测试用户
+种子数据脚本 - 创建本地测试账号
+
+前置条件：
+    1. 已配置 .env
+    2. 已执行 `alembic upgrade head` 建好数据表
 
 运行方式：
-python init_db.py
+    python init_db.py
+
+安全约束：
+    仅在 DEBUG=true 时允许运行，避免误在生产环境写入测试账号。
 """
 
 import sys
@@ -10,63 +17,37 @@ import os
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.core.database import SessionLocal, Base, engine
-from app.models import User, Role
+from app.core.config import settings
+from app.core.database import SessionLocal
+from app.models import User
 from app.core.security import get_password_hash
 
 
 def init_db():
-    """初始化数据库"""
-    print("正在初始化数据库...")
+    if not settings.DEBUG:
+        print("[abort] DEBUG=false，禁止在非调试环境执行 init_db。")
+        sys.exit(1)
 
-    # 创建所有表
-    Base.metadata.create_all(bind=engine)
+    print("正在写入种子数据（本地测试账号）...")
 
     db = SessionLocal()
 
     try:
-        # 创建测试角色
-        roles = ['admin', 'creator', 'viewer']
-        for role_name in roles:
-            role = db.query(Role).filter(Role.name == role_name).first()
-            if not role:
-                role = Role(name=role_name, description=f"{role_name}角色")
-                db.add(role)
-                print(f"创建角色: {role_name}")
-
-        db.commit()
-
-        # 创建测试用户
         test_users = [
-            {
-                'phone': '13800138000',
-                'password': '123456',
-                'nickname': '测试主播',
-                'role': 'creator',
-            },
-            {
-                'phone': '13900139000',
-                'password': '123456',
-                'nickname': '管理员',
-                'role': 'admin',
-            },
+            {"phone": "13800138000", "password": "123456", "nickname": "测试主播"},
+            {"phone": "13900139000", "password": "123456", "nickname": "管理员"},
         ]
 
         for user_data in test_users:
-            existing_user = db.query(User).filter(User.phone == user_data['phone']).first()
+            existing_user = db.query(User).filter(User.phone == user_data["phone"]).first()
             if existing_user:
                 print(f"用户已存在: {user_data['phone']}")
                 continue
 
-            role = db.query(Role).filter(Role.name == user_data['role']).first()
-            if not role:
-                role = db.query(Role).filter(Role.name == 'creator').first()
-
             user = User(
-                phone=user_data['phone'],
-                password_hash=get_password_hash(user_data['password']),
-                nickname=user_data['nickname'],
-                role_id=role.id if role else None,
+                phone=user_data["phone"],
+                password_hash=get_password_hash(user_data["password"]),
+                nickname=user_data["nickname"],
             )
             db.add(user)
             print(f"创建用户: {user_data['phone']}")
@@ -74,14 +55,9 @@ def init_db():
         db.commit()
         print("\n初始化完成！")
         print("=" * 40)
-        print("测试账号：")
-        print("手机: 13800138000")
-        print("密码: 123456")
-        print("角色: 测试主播")
-        print("-" * 40)
-        print("手机: 13900139000")
-        print("密码: 123456")
-        print("角色: 管理员")
+        print("本地测试账号（仅 DEBUG 环境）：")
+        print("手机: 13800138000  密码: 123456  昵称: 测试主播")
+        print("手机: 13900139000  密码: 123456  昵称: 管理员")
         print("=" * 40)
 
     except Exception as e:

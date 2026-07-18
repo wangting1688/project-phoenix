@@ -44,7 +44,7 @@ class VideoProductionJob(Base, BaseModel):
     estimated_duration = Column(Integer, default=0)
 
     creator_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
+    product_id = Column(Integer, nullable=True)  # 生产库无 products 表；保留字段但去除失效 FK
 
     target_platforms = Column(JSON, nullable=True)
     variant_count = Column(Integer, default=0)

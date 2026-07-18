@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models.video_edit_plan import VideoEditPlan, VideoEditSegment
 from app.models.intelligence import CreatorProfile
-from app.models.asset_segment import CreatorPerformanceProfile, CreatorStrategyProfile
+from app.models.asset_segment import CreatorPerformanceProfile
+from app.models.video_performance import CreatorStrategyProfile
 from app.models.user import User
 
 

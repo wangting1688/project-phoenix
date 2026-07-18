@@ -11,6 +11,8 @@ from app.models.content import (
     CreationSession,
 )
 from app.models.footage import Footage, FootageCategory
+from app.models.creator_asset import CreatorAsset
+from app.models.video_project import VideoProject, ContentVersion, VideoShot
 from app.models.intelligence import (
     CreatorProfile,
     ContentTopic,
@@ -94,6 +96,10 @@ __all__ = [
     "CreationSession",
     "Footage",
     "FootageCategory",
+    "CreatorAsset",
+    "VideoProject",
+    "ContentVersion",
+    "VideoShot",
     "CreatorProfile",
     "ContentTopic",
     "SuccessCase",
