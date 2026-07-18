@@ -142,6 +142,15 @@ class MockAIProvider:
 
 class AIExpertService:
     def __init__(self, ai_provider=None):
+        # 默认按 settings.AI_PROVIDER 选择真实 provider (复用 app.services.ai_service 里的实现)
+        if ai_provider is None:
+            try:
+                from app.core.config import settings
+                if settings.AI_PROVIDER == "ark":
+                    from app.services.ai_service import ArkProvider
+                    ai_provider = ArkProvider()
+            except Exception:
+                ai_provider = None
         self.ai_provider = ai_provider or MockAIProvider()
 
     def content_expert(self, topic: str, user_profile: str = "") -> Dict[str, Any]:

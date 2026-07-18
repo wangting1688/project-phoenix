@@ -17,6 +17,13 @@ class Settings(BaseSettings):
 
     STORAGE_PATH: str = "./storage"
 
+    # AI 配置 (mock / ark)
+    AI_PROVIDER: str = "mock"
+    ARK_BASE_URL: Optional[str] = None
+    ARK_API_KEY: Optional[str] = None
+    ARK_MODEL: Optional[str] = None
+    ARK_TIMEOUT: int = 30
+
     class Config:
         env_file = ".env"
 

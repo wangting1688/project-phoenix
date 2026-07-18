@@ -2,6 +2,12 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 import json
 import time
+import logging
+import httpx
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class AIProvider(ABC):
@@ -125,16 +131,76 @@ class MockAIProvider(AIProvider):
         return ["mock-gpt-4", "mock-claude-3"]
 
 
+class ArkProvider(AIProvider):
+    """火山方舟 Agent Plan (OpenAI 兼容 Responses API)."""
+
+    def __init__(self):
+        self.base_url = (settings.ARK_BASE_URL or "").rstrip("/")
+        self.api_key = settings.ARK_API_KEY
+        self.default_model = settings.ARK_MODEL or "ark-code-latest"
+        self.timeout = settings.ARK_TIMEOUT
+        if not self.base_url or not self.api_key:
+            raise ValueError("ARK_BASE_URL / ARK_API_KEY 未配置")
+
+    def generate_content(self, prompt: str, model: str = None) -> str:
+        url = f"{self.base_url}/responses"
+        payload = {
+            "model": model or self.default_model,
+            "input": prompt,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        last_err: Optional[Exception] = None
+        for attempt in range(2):
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    resp = client.post(url, headers=headers, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                # Responses API: output[].content[].text (type=output_text)
+                for item in data.get("output", []):
+                    if item.get("type") == "message":
+                        for c in item.get("content", []):
+                            if c.get("type") == "output_text":
+                                return c.get("text", "")
+                # 兜底: 返回原始 JSON 字符串, 让上层 json.loads 尝试解析
+                return json.dumps(data, ensure_ascii=False)
+            except Exception as e:
+                last_err = e
+                if attempt == 0:
+                    time.sleep(0.5)
+                    continue
+                logger.exception("ArkProvider 调用失败 (2 次): %s", e)
+                # 抛错让 AIService.generate 用现有 json.loads 分支保底
+                return json.dumps({"error": f"ark_provider_failed: {type(e).__name__}"}, ensure_ascii=False)
+        return json.dumps({"error": "ark_provider_unreachable"}, ensure_ascii=False)
+
+    def get_model_list(self) -> list:
+        return [self.default_model]
+
+
 class AIService:
     PROVIDERS = {
         "mock": MockAIProvider,
+        "ark": ArkProvider,
     }
 
-    def __init__(self, provider: str = "mock", model: str = None):
+    def __init__(self, provider: str = None, model: str = None):
+        # 默认从 settings.AI_PROVIDER 读, 允许显式覆盖
+        provider = provider or settings.AI_PROVIDER or "mock"
         self.provider_cls = self.PROVIDERS.get(provider)
         if not self.provider_cls:
             raise ValueError(f"Unknown AI provider: {provider}")
-        self.provider = self.provider_cls()
+        try:
+            self.provider = self.provider_cls()
+        except Exception as e:
+            # provider 初始化失败 (如缺 key) 回退到 mock, 避免整个应用起不来
+            logger.warning("AI provider %s init failed (%s), fallback to mock", provider, e)
+            self.provider = MockAIProvider()
+            provider = "mock"
+        self.provider_name = provider
         self.model = model
         self._call_history = []
 
