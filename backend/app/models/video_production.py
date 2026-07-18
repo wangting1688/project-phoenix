@@ -210,6 +210,8 @@ class GrowthReviewReport(Base, BaseModel):
     director_actions = Column(JSON, nullable=True)
     suggestions = Column(JSON, nullable=True)
 
+    actual_performance = Column(JSON, nullable=True)
+
     review_count = Column(Integer, default=1)
     previous_report_id = Column(Integer, ForeignKey("growth_review_reports.id"), nullable=True)
 

@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models.video_edit_plan import VideoEditPlan, VideoEditSegment
 from app.models.video_production import VideoProductionJob, VideoTimeline, GrowthReviewReport
+from app.models.video_performance import VideoMasterContent, VideoPublishRecord
+from app.models.ingest import DailyIngestSnapshot
 from app.models.user import User
 from app.services.agent_tool_gateway import AgentToolGateway
 from app.services.creator_fit_scorer import CreatorFitScorer
@@ -150,6 +152,8 @@ class GrowthQualityAgentV2:
         if not plan:
             return {"success": False, "error": "导演方案不存在"}
 
+        actual_performance = self._gather_actual_performance(plan)
+
         previous_report = self.db.query(GrowthReviewReport).filter(
             GrowthReviewReport.video_plan_id == plan_id,
             GrowthReviewReport.stage == version_type
@@ -172,6 +176,7 @@ class GrowthQualityAgentV2:
             problems=assessment["problems"],
             director_actions=assessment["director_actions"],
             suggestions=assessment["suggestions"],
+            actual_performance=actual_performance,
             review_count=(previous_report.review_count + 1) if previous_report else 1,
             previous_report_id=previous_report.id if previous_report else None,
             version_type=version_type,
@@ -192,6 +197,7 @@ class GrowthQualityAgentV2:
                 "problems": report.problems,
                 "director_actions": report.director_actions,
                 "suggestions": report.suggestions,
+                "actual_performance": actual_performance,
             },
         }
 
@@ -573,6 +579,76 @@ class GrowthQualityAgentV2:
         if not plan_id:
             return None
         return self.db.query(VideoEditPlan).filter(VideoEditPlan.id == plan_id).first()
+
+    def _gather_actual_performance(self, plan: VideoEditPlan) -> Dict[str, Any]:
+        """
+        从数据采集层拉取该方案对应视频的真实数据。
+
+        联接路径：VideoEditPlan.id → VideoMasterContent.edit_plan_id
+                → VideoPublishRecord.video_id → DailyIngestSnapshot.publish_record_id
+
+        无采集数据时返回 has_actual_data=False，让报告向后兼容。
+        """
+        empty = {"has_actual_data": False}
+
+        masters = self.db.query(VideoMasterContent).filter(
+            VideoMasterContent.edit_plan_id == plan.id,
+        ).all()
+        if not masters:
+            return empty
+
+        master_ids = [m.id for m in masters]
+        records = self.db.query(VideoPublishRecord).filter(
+            VideoPublishRecord.video_id.in_(master_ids)
+        ).all()
+        if not records:
+            return empty
+
+        record_ids = [r.id for r in records]
+        snapshots = (
+            self.db.query(DailyIngestSnapshot)
+            .filter(DailyIngestSnapshot.publish_record_id.in_(record_ids))
+            .order_by(DailyIngestSnapshot.snapshot_date.desc())
+            .limit(30)
+            .all()
+        )
+
+        totals = {
+            "views": sum(r.views or 0 for r in records),
+            "likes": sum(r.likes or 0 for r in records),
+            "comments": sum(r.comments or 0 for r in records),
+            "favorites": sum(r.favorites or 0 for r in records),
+            "shares": sum(r.shares or 0 for r in records),
+            "private_message_count": sum(r.private_message_count or 0 for r in records),
+        }
+
+        by_platform: Dict[str, Dict[str, int]] = {}
+        for r in records:
+            slot = by_platform.setdefault(r.platform, {"views": 0, "likes": 0, "comments": 0})
+            slot["views"] += r.views or 0
+            slot["likes"] += r.likes or 0
+            slot["comments"] += r.comments or 0
+
+        recent = [
+            {
+                "snapshot_date": s.snapshot_date,
+                "platform": s.platform,
+                "source_mode": s.source_mode,
+                "views": s.views,
+                "likes": s.likes,
+                "comments": s.comments,
+            }
+            for s in snapshots[:7]
+        ]
+
+        return {
+            "has_actual_data": True,
+            "totals": totals,
+            "by_platform": by_platform,
+            "recent_snapshots": recent,
+            "snapshot_count": len(snapshots),
+            "platform_count": len(by_platform),
+        }
 
     def _get_segments(self, plan_id: int):
         if not plan_id:

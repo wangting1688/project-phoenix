@@ -74,10 +74,10 @@ class ExperimentService:
             return {"success": False, "error": "实验不存在"}
 
         records_a = self.db.query(VideoPublishRecord).filter(
-            VideoPublishRecord.video_master_id == video_a_id
+            VideoPublishRecord.video_id == video_a_id
         ).all()
         records_b = self.db.query(VideoPublishRecord).filter(
-            VideoPublishRecord.video_master_id == video_b_id
+            VideoPublishRecord.video_id == video_b_id
         ).all()
 
         stats_a = self._calculate_video_stats(records_a)
@@ -192,7 +192,7 @@ class ExperimentService:
             return {"success": False, "error": "视频不存在"}
 
         records = self.db.query(VideoPublishRecord).filter(
-            VideoPublishRecord.video_master_id == video_id
+            VideoPublishRecord.video_id == video_id
         ).all()
 
         if not records:

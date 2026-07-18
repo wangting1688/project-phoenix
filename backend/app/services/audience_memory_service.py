@@ -74,12 +74,14 @@ class AudienceMemoryService:
         if not records:
             return {"success": False, "error": "无发布记录"}
 
-        pain_points = self._extract_pain_points(records)
-        content_preferences = self._extract_content_preferences(records)
-        high_frequency_comments = self._extract_high_frequency_comments(records)
+        all_comments = self._gather_comments(records)
+
+        pain_points = self._extract_pain_points(all_comments)
+        content_preferences = self._extract_content_preferences(all_comments)
+        high_frequency_comments = self._extract_high_frequency_comments(all_comments)
         engagement_patterns = self._extract_engagement_patterns(records)
 
-        audience_segment = self._identify_audience_segment(records)
+        audience_segment = self._identify_audience_segment(all_comments)
 
         memory = AudienceGrowthMemory(
             user_id=user_id,
@@ -109,13 +111,30 @@ class AudienceMemoryService:
             "confidence_score": round(memory.confidence_score, 2),
         }
 
-    def _extract_pain_points(self, records: List[VideoPublishRecord]) -> List[Dict[str, Any]]:
-        """提取痛点"""
-        all_comments = []
-        for r in records:
-            comment_keywords = r.comment_keywords or []
-            all_comments.extend(comment_keywords)
+    def _gather_comments(self, records: List[VideoPublishRecord]) -> List[str]:
+        """从 daily_ingest_snapshots.raw_payload.top_comments 汇总评论文本"""
+        if not records:
+            return []
 
+        from app.models.ingest import DailyIngestSnapshot
+
+        record_ids = [r.id for r in records]
+        snapshots = (
+            self.db.query(DailyIngestSnapshot)
+            .filter(DailyIngestSnapshot.publish_record_id.in_(record_ids))
+            .all()
+        )
+
+        collected: List[str] = []
+        for snap in snapshots:
+            payload = snap.raw_payload or {}
+            top = payload.get("top_comments") or []
+            if isinstance(top, list):
+                collected.extend(str(c) for c in top if c)
+        return collected
+
+    def _extract_pain_points(self, all_comments: List[str]) -> List[Dict[str, Any]]:
+        """提取痛点"""
         pain_point_counts = {}
         for pain_point, keywords in self.PAIN_POINT_KEYWORDS.items():
             count = sum(1 for c in all_comments if any(k in c for k in keywords))
@@ -134,14 +153,9 @@ class AudienceMemoryService:
             "ratio": round(count / total, 2),
         } for point, count in sorted_points]
 
-    def _extract_content_preferences(self, records: List[VideoPublishRecord]) -> Dict[str, float]:
+    def _extract_content_preferences(self, all_comments: List[str]) -> Dict[str, float]:
         """提取内容偏好"""
         preferences = {}
-
-        all_comments = []
-        for r in records:
-            comment_keywords = r.comment_keywords or []
-            all_comments.extend(comment_keywords)
 
         for pref_type, keywords in self.CONTENT_PREFERENCE_KEYWORDS.items():
             count = sum(1 for c in all_comments if any(k in c for k in keywords))
@@ -149,13 +163,8 @@ class AudienceMemoryService:
 
         return preferences
 
-    def _extract_high_frequency_comments(self, records: List[VideoPublishRecord]) -> List[Dict[str, Any]]:
+    def _extract_high_frequency_comments(self, all_comments: List[str]) -> List[Dict[str, Any]]:
         """提取高频评论"""
-        all_comments = []
-        for r in records:
-            comment_keywords = r.comment_keywords or []
-            all_comments.extend(comment_keywords)
-
         counter = Counter(all_comments)
         top_comments = counter.most_common(10)
 
@@ -195,13 +204,8 @@ class AudienceMemoryService:
 
         return patterns
 
-    def _identify_audience_segment(self, records: List[VideoPublishRecord]) -> str:
+    def _identify_audience_segment(self, all_comments: List[str]) -> str:
         """识别用户群体"""
-        all_comments = []
-        for r in records:
-            comment_keywords = r.comment_keywords or []
-            all_comments.extend(comment_keywords)
-
         segment_scores = {}
 
         for segment, info in self.AUDIENCE_SEGMENTS.items():
