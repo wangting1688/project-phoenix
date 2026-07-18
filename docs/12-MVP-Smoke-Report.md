@@ -55,3 +55,44 @@
   - 短期：改造 service 构造函数接受外部 `db: Session`，由 FastAPI `Depends(get_db)` 统一注入。
   - 长期：请求生命周期内共享同一 session，事务边界收敛在 API 层。
 - **AI 服务真实接入**：目前全部走 mock，正式接入前请补 `.env` 中的 AI 相关 key，并在 `AIExpertService` 里加超时/重试。
+
+---
+
+## 五、批次 5 追加轮次（2026-07-18）
+
+自批次 4 冒烟之后陆续推进的多批次改动汇总，均已 push 到 `origin/main`。
+
+### 5.1 交付清单
+
+| 提交 | 类型 | 摘要 |
+|------|------|------|
+| `88e0d67` | feat | 阶段五 Iter-1 数据采集骨架 |
+| `8e5d26a` | feat | 阶段五 Iter-3 分析层对接采集数据 + 修历史脏引用 |
+| `f08b580` | fix | growth-review 3 处历史脏引用，`generate-report` 端到端 200 |
+| `8fd2014` | feat | 阶段五 Iter-2 手工数据登记页面 |
+| `3a3da8b` | fix | 前端 `icons.ts` 缺失导出，`vite build` 通过 |
+| `061f199` | fix | 清理 v1 历史脏引用（`growth_quality_agent` + `production_repair_agent`） |
+| `98ffab3` | perf | 前端拆 vendor chunk，业务主包 1244 kB → 55 kB |
+| `4fae7ed` | docs | ADR-01 归档 `ContentMetrics` vs `VideoPublishRecord` 双表决策 |
+
+### 5.2 验证记录
+
+- **`growth_quality_agent` 单元冒烟**（`plan#4`, 5 段）：`_evaluate_hook=100`、`_calculate_info_density`、`_analyze_emotion_curve`、`_identify_follow_reasons`、`_detect_risks` 全绿，无 `AttributeError`。
+- **脏引用静态扫描**：`plan.platform` / `product_name` / `product_category` / `hook_segment.script_content` 未守护引用 = 0。
+- **前端构建对比**：
+  - Baseline：业务主包 `1244 kB`（gzip `404 kB`），单包超警戒线。
+  - Batch A：业务主包 `55 kB`（gzip `21 kB`），`vendor-element-plus 906 kB / vendor-el-icons 171 kB / vendor-vue 110 kB` 分离。
+- **`viral-analysis/generate-report`**：`f08b580` 后端到端 200，历史脏引用清零。
+
+### 5.3 数据现状（本地 SQLite）
+
+- `plan#4` 具备 5 段（hook / pain / social_proof / conversion / general），供分析层使用。
+- `video_publish_records`：#1 douyin（胶原蛋白测试）、#2 xiaohongshu、#3 Iter-2 空模板。
+- `daily_ingest_snapshots`：3 条。
+- `video_master_content#1` 已通过 SQL 关联 `edit_plan_id=4`。
+
+### 5.4 遗留 / 未修（记录，非本轮范围）
+
+- **前端主 vendor 天花板**：`vendor-element-plus 906 kB` 仍超 500 kB 警告线，根因是 `main.ts` 里 `app.use(ElementPlus)` + 全量 icons 注册，属结构性重构，待独立批次处理。
+- **发现 08（SessionLocal 未统一）**：状态不变，等专项治理。
+- **发现 01（ContentProject status/workflow_status 语义）**：未推动，等前后端契约对齐。
