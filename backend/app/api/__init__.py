@@ -26,6 +26,7 @@ from app.api.growth_review import router as growth_review_router
 from app.api.growth_decision_graph import router as growth_decision_router
 from app.api.growth_insights import router as growth_insights_router
 from app.api.growth_causal_graph import router as growth_causal_router
+from app.api.ingest import router as ingest_router
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -55,3 +56,4 @@ api_router.include_router(growth_review_router)
 api_router.include_router(growth_decision_router)
 api_router.include_router(growth_insights_router)
 api_router.include_router(growth_causal_router)
+api_router.include_router(ingest_router)

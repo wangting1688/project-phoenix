@@ -82,6 +82,7 @@ from app.models.video_production import (
     GrowthEvidenceScore,
     GrowthKnowledgeConflict,
 )
+from app.models.ingest import DailyIngestSnapshot
 
 __all__ = [
     "User",
@@ -157,4 +158,5 @@ __all__ = [
     "DirectorMistakeMemory",
     "GrowthEvidenceScore",
     "GrowthKnowledgeConflict",
+    "DailyIngestSnapshot",
 ]
