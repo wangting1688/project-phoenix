@@ -191,6 +191,7 @@ class WorkflowOrchestrator:
         ).first()
         if project:
             project.workflow_status = "completed"
+            project.status = "completed"
             self.db.commit()
 
         task = self.db.query(WorkflowTask).filter(
@@ -203,6 +204,14 @@ class WorkflowOrchestrator:
             self.db.commit()
 
     def _mark_failed(self, error: str):
+        project = self.db.query(ContentProject).filter(
+            ContentProject.id == self.project_id
+        ).first()
+        if project:
+            project.workflow_status = "failed"
+            project.status = "failed"
+            self.db.commit()
+
         task = self.db.query(WorkflowTask).filter(
             WorkflowTask.project_id == self.project_id,
             WorkflowTask.task_type == "full_creation"

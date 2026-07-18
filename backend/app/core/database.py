@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -16,6 +16,17 @@ else:
     engine_kwargs["max_overflow"] = 20
 
 engine = create_engine(db_url, connect_args=connect_args, **engine_kwargs)
+
+
+# SQLite 下开启 WAL + busy_timeout：允许并发读、写者串行但不再瞬时死锁。
+# MySQL 等其他方言时该钩子不生效。
+if db_url.startswith("sqlite"):
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragma_on_connect(dbapi_conn, _):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

@@ -52,8 +52,13 @@ class DirectorEnhancementService:
         "product_demo": ["推荐", "好用", "效果", "展示", "试试", "体验", "真实"],
     }
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db=None):
+        if db is not None:
+            self.db = db
+            self._owns_db = False
+        else:
+            self.db = SessionLocal()
+            self._owns_db = True
 
     # ==================== 1. 爆款模板匹配 ====================
 
@@ -523,4 +528,5 @@ class DirectorEnhancementService:
         return self.db.query(VideoScriptTemplate).filter(VideoScriptTemplate.id == template_id).first()
 
     def close(self):
-        self.db.close()
+        if self._owns_db:
+            self.db.close()

@@ -70,7 +70,7 @@ class VideoDirectorService:
 
     def __init__(self):
         self.db = SessionLocal()
-        self.enhancement = DirectorEnhancementService()
+        self.enhancement = DirectorEnhancementService(db=self.db)
 
     # ==================== 核心功能：生成剪辑方案 ====================
 
