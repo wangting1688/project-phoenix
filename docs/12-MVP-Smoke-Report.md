@@ -96,3 +96,18 @@
 - **前端主 vendor 天花板**：`vendor-element-plus 906 kB` 仍超 500 kB 警告线，根因是 `main.ts` 里 `app.use(ElementPlus)` + 全量 icons 注册，属结构性重构，待独立批次处理。
 - **发现 08（SessionLocal 未统一）**：状态不变，等专项治理。
 - **发现 01（ContentProject status/workflow_status 语义）**：未推动，等前后端契约对齐。
+
+### 5.5 UI 冒烟（CSS 按需之后）
+
+`9e6cf7b` 提交后本地起 `vite dev` + `vite preview` 双通道验证，均通过：
+
+| 验证点 | 结果 |
+|---|---|
+| `vite dev` 起服 | ✓ 498 ms ready |
+| `main.ts` 命令式 API 样式按需 import (`message`、`message-box`) 被 vite 解析 | ✓ 200 |
+| `App.vue` `ElConfigProvider` Resolver 自动引入，`base`/`config-provider` 样式挂上 | ✓ |
+| `vite preview` serve 生产 build，HTML `modulepreload` 三个 vendor 全就绪 | ✓ |
+| 业务主 `index-*.js 55 kB` / `vendor-element-plus.css 135 kB` | ✓ 200 |
+| 后端 9 条关键 GET 冒烟（`auth/me`、`content-hub/today`、`creator-profile`、`creation-studio/templates`、`creation-studio/sessions`、`asset-collection/tasks`、`video-director/plans`、`video-production/jobs`、`agent-gateway/tools`） | ✓ 9/9 均 200 |
+
+**结论**：CSS 按需改动无功能/样式回归，`ElMessage` / `ElMessageBox` 命令式 API 与模板组件样式各自到位，可继续下一批次。
