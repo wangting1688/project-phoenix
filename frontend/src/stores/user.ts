@@ -29,17 +29,7 @@ export const useUserStore = defineStore('user', () => {
   const isLoggedIn = computed(() => !!token.value)
 
   async function login(phone: string, password: string) {
-    if (mockUsers[phone] && password === '123456') {
-      const mockUser = mockUsers[phone]
-      token.value = `mock_token_${phone}`
-      userInfo.value = mockUser
-      localStorage.setItem('token', token.value)
-      return {
-        token: token.value,
-        user: mockUser,
-      } as LoginResponse
-    }
-
+    // 历史 mock 后门 (mockUsers + mock_token_*) 已移除, 一律走后端真实登录拿 JWT
     const res = await loginApi(phone, password)
     token.value = res.token
     userInfo.value = res.user

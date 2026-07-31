@@ -18,3 +18,5 @@ class User(Base, BaseModel):
 
     projects = relationship("ContentProject", back_populates="user")
     memory = relationship("UserMemory", back_populates="user")
+    platform_accounts = relationship("PlatformAccount", back_populates="user")
+    publish_tasks = relationship("PublishTask", back_populates="user")

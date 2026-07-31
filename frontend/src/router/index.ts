@@ -123,6 +123,18 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/videoProduction/index.vue'),
         meta: { title: 'AI视频生产工厂', requiresAuth: true },
       },
+      {
+        path: 'platform-account',
+        name: 'PlatformAccount',
+        component: () => import('@/views/platformAccount/index.vue'),
+        meta: { title: '平台账号管理', requiresAuth: true },
+      },
+      {
+        path: 'publish-center',
+        name: 'PublishCenter',
+        component: () => import('@/views/publishCenter/index.vue'),
+        meta: { title: '发布中心', requiresAuth: true },
+      },
     ],
   },
 ]

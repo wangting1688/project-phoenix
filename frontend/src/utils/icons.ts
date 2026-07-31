@@ -38,3 +38,9 @@ export const IStar = (ElementPlusIconsVue as any).Star
 export const IRefresh = (ElementPlusIconsVue as any).Refresh
 // element-plus icons 只有单数 Scissor
 export const IScissors = (ElementPlusIconsVue as any).Scissor
+export const IPlus = (ElementPlusIconsVue as any).Plus
+export const IView = (ElementPlusIconsVue as any).View
+export const ILike = (ElementPlusIconsVue as any).StarFilled
+export const IChatDotRound = (ElementPlusIconsVue as any).ChatDotRound
+export const IShare = (ElementPlusIconsVue as any).Share
+export const IInfoFilled = (ElementPlusIconsVue as any).InfoFilled

@@ -83,6 +83,8 @@ from app.models.video_production import (
     GrowthKnowledgeConflict,
 )
 from app.models.ingest import DailyIngestSnapshot
+from app.models.platform_account import PlatformAccount
+from app.models.publish_task import PublishTask
 
 __all__ = [
     "User",
@@ -159,4 +161,6 @@ __all__ = [
     "GrowthEvidenceScore",
     "GrowthKnowledgeConflict",
     "DailyIngestSnapshot",
+    "PlatformAccount",
+    "PublishTask",
 ]
