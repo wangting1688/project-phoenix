@@ -91,15 +91,16 @@
         <div class="video-card card">
           <div class="video-preview">
             <video
-              v-if="previewSrc"
+              v-if="previewSrc && !videoError"
               :src="previewSrc"
               controls
               preload="metadata"
               class="preview-video"
+              @error="videoError = true"
             ></video>
             <div v-else class="video-placeholder">
               <el-icon :size="48"><IVideoCamera /></el-icon>
-              <span>{{ composition ? '视频方案已生成' : '视频已生成' }}</span>
+              <span>{{ videoError ? '素材加载失败, 请稍后重试' : (composition ? '视频方案已生成' : '视频已生成') }}</span>
             </div>
             <p v-if="previewSrc" class="preview-hint">
               预览来自素材库片段, 正式视频需后端执行 ffmpeg 命令合成
@@ -255,6 +256,7 @@ const scripts = ref<Script[]>([])
 const video = ref<VideoInfo | null>(null)
 const activeScript = ref(0)
 const composition = ref<ComposeResult | null>(null)
+const videoError = ref(false)
 const composing = ref(false)
 const editingScript = ref<number | null>(null)
 
@@ -528,11 +530,19 @@ function goPublish() {
 
 .video-card { text-align: center; padding: 30px; }
 .video-preview {
-  aspect-ratio: 9/16; max-width: 250px; margin: 0 auto 20px;
+  max-width: 360px; max-height: 480px; min-height: 240px; margin: 0 auto 20px;
   background: linear-gradient(135deg, #667eea20, #764ba220);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  color: #667eea; border-radius: 12px;
+  color: #667eea; border-radius: 12px; overflow: hidden;
 }
+.preview-video {
+  width: 100%; max-width: 360px; max-height: 480px;
+  display: block; background: #000; border-radius: 8px;
+}
+.video-placeholder {
+  padding: 24px 16px; text-align: center; line-height: 1.6;
+}
+.video-placeholder span { display: block; margin-top: 8px; font-size: 14px; }
 .video-actions { display: flex; gap: 10px; justify-content: center; }
 
 /* 视频合成方案展示 */
