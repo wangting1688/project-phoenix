@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.api import api_router
@@ -20,6 +21,10 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+# 视频合成方案预览: 暴露 storage 目录给前端 <video src="/static/footage/..."/>
+# 仅本地开发/演示用, 生产应改用对象存储 + 签名 URL
+app.mount("/static", StaticFiles(directory="storage"), name="static")
 
 
 @app.on_event("startup")

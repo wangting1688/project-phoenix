@@ -90,8 +90,20 @@
         </div>
         <div class="video-card card">
           <div class="video-preview">
-            <el-icon :size="48"><IVideoCamera /></el-icon>
-            <span>{{ composition ? '视频方案已生成' : '视频已生成' }}</span>
+            <video
+              v-if="previewSrc"
+              :src="previewSrc"
+              controls
+              preload="metadata"
+              class="preview-video"
+            ></video>
+            <div v-else class="video-placeholder">
+              <el-icon :size="48"><IVideoCamera /></el-icon>
+              <span>{{ composition ? '视频方案已生成' : '视频已生成' }}</span>
+            </div>
+            <p v-if="previewSrc" class="preview-hint">
+              预览来自素材库片段, 正式视频需后端执行 ffmpeg 命令合成
+            </p>
           </div>
 
           <!-- 视频合成方案 -->
@@ -245,6 +257,16 @@ const activeScript = ref(0)
 const composition = ref<ComposeResult | null>(null)
 const composing = ref(false)
 const editingScript = ref<number | null>(null)
+
+const previewSrc = computed(() => {
+  if (!composition.value) return null
+  const scene = composition.value.plan?.scene_plan?.[0]
+  if (!scene?.footage_path) return null
+  // 后端 StaticFiles mount /static -> storage, 取文件名后挂 /static/footage/{user_id}/{filename}
+  const m = scene.footage_path.match(/footage\/(\d+)\/([^/]+)$/)
+  if (!m) return null
+  return `/static/footage/${m[1]}/${m[2]}`
+})
 const editContent = ref('')
 const savingScript = ref(false)
 const operationData = ref<any>({
