@@ -94,7 +94,7 @@
           :closable="false"
           show-icon
           title="当前显示的是方案内第 1 段原始素材"
-          description="完整最终视频（字幕/配音/转场）需点击下方"渲染最终视频"按钮生成, 可能需要数秒."
+          description="完整最终视频 (字幕/配音/转场) 需点击下方『渲染最终视频』按钮生成, 可能需要数秒"
           class="video-alert"
         />
         <div class="video-card card">
