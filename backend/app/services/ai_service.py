@@ -170,10 +170,9 @@ class ArkProvider(AIProvider):
             except Exception as e:
                 last_err = e
                 if attempt == 0:
-                    time.sleep(0.5)
+                    time.sleep(1)
                     continue
-                logger.exception("ArkProvider 调用失败 (2 次): %s", e)
-                # 抛错让 AIService.generate 用现有 json.loads 分支保底
+                logger.warning("ArkProvider 调用失败 (2 次), 让上层降级 mock: %s", e)
                 return json.dumps({"error": f"ark_provider_failed: {type(e).__name__}"}, ensure_ascii=False)
         return json.dumps({"error": "ark_provider_unreachable"}, ensure_ascii=False)
 

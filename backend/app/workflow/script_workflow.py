@@ -26,6 +26,12 @@ class ScriptWorkflow(BaseWorkflow):
                 input_data or {}
             )
 
+            # AI 失败时 (含 ark_provider_failed) 不保存空记录, 让 workflow 标 failed
+            if "error" in ai_result or not ai_result.get("story_version"):
+                raise RuntimeError(
+                    f"AI 未生成有效文案: {ai_result.get('error', 'empty_result')}"
+                )
+
             script_story = Script(
                 project_id=self.project_id,
                 type="story",

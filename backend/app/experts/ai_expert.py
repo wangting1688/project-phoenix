@@ -1,5 +1,8 @@
 import os
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 from typing import Dict, Any, Optional
 
 
@@ -142,7 +145,7 @@ class MockAIProvider:
 
 class AIExpertService:
     def __init__(self, ai_provider=None):
-        # 默认按 settings.AI_PROVIDER 选择真实 provider (复用 app.services.ai_service 里的实现)
+        # 默认按 settings.AI_PROVIDER 选择真实 provider, 失败/降级时回退到内置 mock
         if ai_provider is None:
             try:
                 from app.core.config import settings
@@ -151,7 +154,21 @@ class AIExpertService:
                     ai_provider = ArkProvider()
             except Exception:
                 ai_provider = None
-        self.ai_provider = ai_provider or MockAIProvider()
+        self._mock = MockAIProvider()
+        self.ai_provider = ai_provider or self._mock
+
+    def _safe_generate(self, prompt: str) -> Dict[str, Any]:
+        """调用真实 provider, 失败/超时时降级到 mock (产品级容灾, UI 始终有内容可看)"""
+        try:
+            result = self.ai_provider.generate_content(prompt)
+            data = json.loads(result)
+            if "error" in data:
+                logger.warning("AI provider 失败, 降级 mock: %s", data["error"])
+                return json.loads(self._mock.generate_content(prompt))
+            return data
+        except Exception as e:
+            logger.warning("AI provider 异常, 降级 mock: %s", e)
+            return json.loads(self._mock.generate_content(prompt))
 
     def content_expert(self, topic: str, user_profile: str = "") -> Dict[str, Any]:
         prompt = PromptLoader.load_prompt("content_expert")
@@ -160,8 +177,7 @@ class AIExpertService:
             topic=topic,
             user_profile=user_profile
         )
-        result = self.ai_provider.generate_content(formatted_prompt)
-        return json.loads(result)
+        return self._safe_generate(formatted_prompt)
 
     def planning_expert(self, content_result: Dict[str, Any]) -> Dict[str, Any]:
         prompt = PromptLoader.load_prompt("planning_expert")
@@ -169,8 +185,7 @@ class AIExpertService:
             prompt,
             content_result=json.dumps(content_result, ensure_ascii=False)
         )
-        result = self.ai_provider.generate_content(formatted_prompt)
-        return json.loads(result)
+        return self._safe_generate(formatted_prompt)
 
     def script_expert(self, topic: str, planning: Dict[str, Any]) -> Dict[str, Any]:
         prompt = PromptLoader.load_prompt("script_expert")
@@ -179,8 +194,7 @@ class AIExpertService:
             topic=topic,
             planning=json.dumps(planning, ensure_ascii=False)
         )
-        result = self.ai_provider.generate_content(formatted_prompt)
-        return json.loads(result)
+        return self._safe_generate(formatted_prompt)
 
     def compliance_expert(self, script: str) -> Dict[str, Any]:
         prompt = PromptLoader.load_prompt("compliance_expert")
@@ -188,8 +202,7 @@ class AIExpertService:
             prompt,
             script=script
         )
-        result = self.ai_provider.generate_content(formatted_prompt)
-        return json.loads(result)
+        return self._safe_generate(formatted_prompt)
 
     def video_expert(self, script: str) -> Dict[str, Any]:
         prompt = PromptLoader.load_prompt("video_expert")
@@ -197,8 +210,7 @@ class AIExpertService:
             prompt,
             script=script
         )
-        result = self.ai_provider.generate_content(formatted_prompt)
-        return json.loads(result)
+        return self._safe_generate(formatted_prompt)
 
     def operation_expert(self, topic: str, script: str) -> Dict[str, Any]:
         prompt = PromptLoader.load_prompt("operation_expert")
@@ -207,5 +219,4 @@ class AIExpertService:
             topic=topic,
             script=script[:500]
         )
-        result = self.ai_provider.generate_content(formatted_prompt)
-        return json.loads(result)
+        return self._safe_generate(formatted_prompt)
