@@ -113,8 +113,8 @@ export interface RenderResult {
   has_audio: boolean
 }
 
-export function renderVideo(projectId: number, plan: CompositionPlan, scriptText = "", withTts = true) {
+export function renderVideo(projectId: number, plan: CompositionPlan, scriptText = "", withTts = true, voiceProfileId?: number) {
   return request.post<any, { data: RenderResult }>(`/video/render/${projectId}`, {
-    plan, script_text: scriptText, with_tts: withTts,
+    plan, script_text: scriptText, with_tts: withTts, voice_profile_id: voiceProfileId ?? null,
   })
 }

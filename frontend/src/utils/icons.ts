@@ -27,6 +27,7 @@ export const ICopyDocument = (ElementPlusIconsVue as any).CopyDocument
 export const ICheck = (ElementPlusIconsVue as any).Check
 export const IDocument = (ElementPlusIconsVue as any).Document
 export const ISetting = (ElementPlusIconsVue as any).Setting
+export const IMicrophone = (ElementPlusIconsVue as any).Microphone
 export const IDataAnalysis = (ElementPlusIconsVue as any).DataAnalysis
 export const IHelp = (ElementPlusIconsVue as any).Help
 export const IHouse = (ElementPlusIconsVue as any).House

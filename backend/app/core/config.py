@@ -24,12 +24,19 @@ class Settings(BaseSettings):
     ARK_MODEL: Optional[str] = None
     ARK_TIMEOUT: int = 30
 
-    # 火山方舟豆包语音 TTS (Voice Cloning)
-    # 训练: POST /api/v3/tts/voice_clone
-    # 合成: POST /api/v3/tts (C2 阶段对接)
-    VOLC_TTS_BASE_URL: Optional[str] = None
+    # 火山方舟豆包语音 TTS (Voice Cloning) — 独立新账号
+    # 鉴权: 训练/合成都用 X-Api-Key header (新控制台)
+    #       https://console.volcengine.com/speech/new/setting/apikeys
+    # 训练: POST {BASE_URL}/api/v3/tts/voice_clone
+    # 合成: POST {BASE_URL}/api/v3/tts
+    VOLC_TTS_BASE_URL: str = "https://openspeech.bytedance.com"
     VOLC_TTS_API_KEY: Optional[str] = None
-    VOLC_TTS_TIMEOUT: int = 60  # 训练接口 30s 内, 合成 10s, 给 60s 留余量
+    VOLC_TTS_APP_ID: Optional[str] = None
+    VOLC_TTS_CLUSTER: Optional[str] = None
+    VOLC_TTS_ACCESS_TOKEN: Optional[str] = None  # 兼容旧版 Bearer (可选)
+    VOLC_TTS_IAM_AK: Optional[str] = None       # 兼容 HMAC (可选)
+    VOLC_TTS_IAM_SK: Optional[str] = None       # 兼容 HMAC (可选)
+    VOLC_TTS_TIMEOUT: int = 60
 
     class Config:
         env_file = ".env"

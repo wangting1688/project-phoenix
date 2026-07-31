@@ -210,6 +210,21 @@
             <el-button type="primary" :loading="composing" @click="goGenerateVideo">
               {{ composition ? '重新生成方案' : '生成视频方案' }}
             </el-button>
+            <el-select
+              v-model="selectedVoiceId"
+              placeholder="系统配音"
+              clearable
+              size="default"
+              class="voice-select"
+            >
+              <el-option label="系统配音" :value="null" />
+              <el-option
+                v-for="v in activeVoices"
+                :key="v.id"
+                :label="`🎙️ ${v.name}`"
+                :value="v.id"
+              />
+            </el-select>
             <el-button
               type="success"
               :loading="rendering"
@@ -270,6 +285,7 @@ import {
   type TaskStatus, type Script, type VideoInfo,
 } from '@/api/creation'
 import { composeVideo, renderVideo, type ComposeResult } from '@/api/video'
+import { getVoiceProfiles, type VoiceProfile } from '@/api/voiceProfile'
 
 const route = useRoute()
 const router = useRouter()
@@ -283,6 +299,9 @@ const activeScript = ref(0)
 const composition = ref<ComposeResult | null>(null)
 const videoError = ref(false)
 const rendering = ref(false)
+const voiceProfiles = ref<VoiceProfile[]>([])
+const selectedVoiceId = ref<number | null>(null)
+const activeVoices = computed(() => voiceProfiles.value.filter((v) => v.status === 'active'))
 const renderedVideo = ref<{ video_id: number; output_url: string; duration: number } | null>(null)
 const renderedSrc = computed(() => renderedVideo.value ? `/static/output/${renderedVideo.value.output_url.split('/').pop()}` : null)
 const composing = ref(false)
@@ -334,7 +353,17 @@ onMounted(() => {
   if (taskId) {
     pollStatus()
   }
+  loadVoiceProfiles()
 })
+
+async function loadVoiceProfiles() {
+  try {
+    const res = await getVoiceProfiles()
+    voiceProfiles.value = res.data || []
+  } catch {
+    voiceProfiles.value = []
+  }
+}
 
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -498,7 +527,7 @@ function goRenderVideo() {
   rendering.value = true
   // 把 plan + 当前选中脚本文本透传给后端 (后端会烧字幕 + TTS 配音)
   const scriptText = scripts.value[activeScript.value]?.content || ""
-  renderVideo(projectId.value, composition.value.plan, scriptText, true)
+  renderVideo(projectId.value, composition.value.plan, scriptText, true, selectedVoiceId.value ?? undefined)
     .then((res: any) => {
       renderedVideo.value = res
       ElMessage.success(`最终视频已生成 (${res.duration}s)`)
@@ -581,16 +610,17 @@ function goPublish() {
 }
 .script-actions { display: flex; gap: 10px; }
 
+.voice-select { width: 150px; margin-right: 8px; }
 .video-card { text-align: center; padding: 30px; }
 .video-alert { max-width: 480px; margin: 0 auto 16px; }
 .video-preview {
-  max-width: 360px; max-height: 480px; min-height: 240px; margin: 0 auto 20px;
+  width: 360px; height: 640px; margin: 0 auto 20px;  /* 9:16 竖屏 */
   background: linear-gradient(135deg, #667eea20, #764ba220);
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   color: #667eea; border-radius: 12px; overflow: hidden;
 }
 .preview-video {
-  width: 100%; max-width: 360px; max-height: 480px;
+  width: 100%; height: 100%; object-fit: contain;
   display: block; background: #000; border-radius: 8px;
 }
 .video-placeholder {

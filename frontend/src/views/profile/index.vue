@@ -58,6 +58,14 @@
             </div>
             <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
           </div>
+          <div class="menu-divider"></div>
+          <div class="menu-item" @click="$router.push('/voice-profile')">
+            <div class="menu-left">
+              <el-icon :size="20" class="menu-icon orange"><IMicrophone /></el-icon>
+              <span>我的声音</span>
+            </div>
+            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+          </div>
         </div>
 
         <div class="menu-card card">
@@ -100,6 +108,7 @@ import {
   IArrowRight,
   IDataAnalysis,
   IUser,
+  IMicrophone,
   ISetting,
   IHelp,
 } from '@/utils/icons'

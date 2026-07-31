@@ -76,6 +76,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '素材库', requiresAuth: true },
       },
       {
+        path: 'voice-profile',
+        name: 'VoiceProfile',
+        component: () => import('@/views/voiceProfile/index.vue'),
+        meta: { title: '我的声音', requiresAuth: true },
+      },
+      {
         path: 'profile',
         name: 'Profile',
         component: () => import('@/views/profile/index.vue'),
