@@ -107,9 +107,9 @@ async def get_organic_growth_score(plan_id: int, current_user = Depends(get_curr
 # ==================== 三版本策略 ====================
 
 @router.post("/jobs/{job_id}/three-versions")
-async def create_three_versions(job_id: int, current_user = Depends(get_current_user)):
+async def create_three_versions(job_id: int, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """创建三版本"""
-    service = ThreeVersionProductionService()
+    service = ThreeVersionProductionService(db=db)
     try:
         result = service.create_three_versions(job_id)
         if result["success"]:
@@ -120,9 +120,9 @@ async def create_three_versions(job_id: int, current_user = Depends(get_current_
 
 
 @router.get("/jobs/{job_id}/versions")
-async def list_versions(job_id: int, current_user = Depends(get_current_user)):
+async def list_versions(job_id: int, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """列出所有版本"""
-    service = ThreeVersionProductionService()
+    service = ThreeVersionProductionService(db=db)
     try:
         versions = service.list_versions(job_id)
         return {"success": True, "data": versions}
@@ -131,9 +131,9 @@ async def list_versions(job_id: int, current_user = Depends(get_current_user)):
 
 
 @router.post("/versions/{version_id}/assess")
-async def assess_version(version_id: int, current_user = Depends(get_current_user)):
+async def assess_version(version_id: int, current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """评估单个版本"""
-    service = ThreeVersionProductionService()
+    service = ThreeVersionProductionService(db=db)
     try:
         result = service.assess_version(version_id)
         if result["success"]:

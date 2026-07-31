@@ -9,7 +9,7 @@ TASK-016.3B.4：AI Growth Review Memory
 3. 共享素材资产，差异化配置
 """
 
-from typing import List, Dict, Any
+from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
@@ -40,13 +40,21 @@ class ThreeVersionProductionService:
         },
     }
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db: Optional[Session] = None):
+        # 支持 API 层 Depends(get_db) 注入, 消除嵌套 SessionLocal 引发的 sqlite 单写者锁
+        if db is not None:
+            self.db = db
+            self._owns_db = False
+        else:
+            self.db = SessionLocal()
+            self._owns_db = True
         self.gateway = AgentToolGateway()
         self.growth_agent = GrowthQualityAgentV2()
 
     def close(self):
-        self.db.close()
+        # 只关自建 session, 注入的 db 生命周期由外部管理
+        if getattr(self, "_owns_db", True):
+            self.db.close()
         self.growth_agent.close()
 
     def create_three_versions(self, job_id: int) -> Dict[str, Any]:
