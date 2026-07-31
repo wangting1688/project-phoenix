@@ -28,6 +28,12 @@ export default defineConfig({
         target: 'http://127.0.0.1:8000',
         changeOrigin: true,
       },
+      // 视频合成方案预览: 走 <video src="/static/footage/..."> 同源访问,
+      // 浏览器 console 看不到跨域报错, 部署时记得后端也得有 /static
+      '/static': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
     },
   },
   build: {
