@@ -1,6 +1,7 @@
 from typing import Dict, Any, Optional
 from datetime import datetime
 
+from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models import (
     CreationSession, ContentProject, ContentOpportunity,
@@ -42,8 +43,14 @@ class CreationStudioService:
         90: "90秒",
     }
 
-    def __init__(self):
-        self.db = SessionLocal()
+    def __init__(self, db: Optional[Session] = None):
+        # 支持 API 层 Depends(get_db) 注入, 消除嵌套 SessionLocal 引发的 sqlite 单写者锁
+        if db is not None:
+            self.db = db
+            self._owns_db = False
+        else:
+            self.db = SessionLocal()
+            self._owns_db = True
 
     def create_session(
         self,

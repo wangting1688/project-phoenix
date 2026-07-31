@@ -1,4 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.core.database import get_db
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 
@@ -26,9 +28,9 @@ class GenerateRequest(BaseModel):
 
 
 @router.get("/templates")
-async def get_templates(current_user = Depends(get_current_user)):
+async def get_templates(current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """获取创作模板（风格、语气、时长选项）"""
-    service = CreationStudioService()
+    service = CreationStudioService(db=db)
     try:
         return {
             "success": True,
@@ -45,10 +47,11 @@ async def get_templates(current_user = Depends(get_current_user)):
 @router.post("/sessions")
 async def create_session(
     request: CreateSessionRequest,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """创建创作会话"""
-    service = CreationStudioService()
+    service = CreationStudioService(db=db)
     try:
         session = service.create_session(
             user_id=current_user.id,
@@ -71,10 +74,11 @@ async def create_session(
 @router.post("/configure")
 async def configure_session(
     request: ConfigureRequest,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """配置创作参数"""
-    service = CreationStudioService()
+    service = CreationStudioService(db=db)
     try:
         session = service.configure_session(
             session_id=request.session_id,
@@ -99,10 +103,11 @@ async def configure_session(
 @router.post("/generate")
 async def generate_content(
     request: GenerateRequest,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """生成内容（Planning + Script + Review）"""
-    service = CreationStudioService()
+    service = CreationStudioService(db=db)
     try:
         result = service.generate_content(request.session_id)
         return {
@@ -118,10 +123,11 @@ async def generate_content(
 @router.get("/sessions/{session_id}")
 async def get_session(
     session_id: int,
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """获取创作会话状态和结果"""
-    service = CreationStudioService()
+    service = CreationStudioService(db=db)
     try:
         result = service.get_session_result(session_id)
         if not result:
@@ -132,9 +138,9 @@ async def get_session(
 
 
 @router.get("/sessions")
-async def list_sessions(current_user = Depends(get_current_user)):
+async def list_sessions(current_user = Depends(get_current_user), db: Session = Depends(get_db)):
     """获取用户活跃创作会话"""
-    service = CreationStudioService()
+    service = CreationStudioService(db=db)
     try:
         sessions = service.get_user_active_sessions(current_user.id)
         return {
