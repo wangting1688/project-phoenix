@@ -390,9 +390,18 @@ function copyScript(content: string) {
   })
 }
 
+function extractApiError(err: any): string {
+  const detail = err?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  if (Array.isArray(detail) && detail.length > 0) {
+    return detail.map((d: any) => d?.msg || d?.message || JSON.stringify(d)).join("; ")
+  }
+  return err?.response?.data?.message || err?.message || '生成失败'
+}
+
 function goGenerateVideo(scriptId?: number) {
   if (!taskId) return
-  if (!projectId.value) {
+  if (!projectId.value || projectId.value <= 0) {
     ElMessage.error('项目ID未加载，请稍候再试')
     return
   }
@@ -403,8 +412,7 @@ function goGenerateVideo(scriptId?: number) {
       ElMessage.success(`视频方案已生成，质量评分 ${res.quality.total}`)
     })
     .catch((err: any) => {
-      const msg = err?.response?.data?.message || err?.detail || '生成失败'
-      ElMessage.error(msg)
+      ElMessage.error(extractApiError(err))
     })
     .finally(() => {
       composing.value = false
