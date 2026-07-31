@@ -105,3 +105,16 @@ export function composeVideo(projectId: number, scriptId?: number) {
 export function getVideoPlan(projectId: number) {
   return request.get(`/video/plan/${projectId}`)
 }
+
+export interface RenderResult {
+  video_id: number
+  output_url: string
+  duration: number
+  has_audio: boolean
+}
+
+export function renderVideo(projectId: number, plan: CompositionPlan, scriptText = "", withTts = true) {
+  return request.post<any, { data: RenderResult }>(`/video/render/${projectId}`, {
+    plan, script_text: scriptText, with_tts: withTts,
+  })
+}

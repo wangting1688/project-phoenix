@@ -86,12 +86,29 @@
       <!-- 视频展示 -->
       <div v-if="video || composition" class="section">
         <div class="section-header">
-          <h3>视频</h3>
+          <h3>素材片段预览 <el-tag size="small" type="info" effect="plain">demo 阶段</el-tag></h3>
         </div>
+        <el-alert
+          v-if="!renderedVideo"
+          type="info"
+          :closable="false"
+          show-icon
+          title="当前显示的是方案内第 1 段原始素材"
+          description="完整最终视频（字幕/配音/转场）需点击下方"渲染最终视频"按钮生成, 可能需要数秒."
+          class="video-alert"
+        />
         <div class="video-card card">
           <div class="video-preview">
             <video
-              v-if="previewSrc && !videoError"
+              v-if="renderedSrc"
+              :src="renderedSrc"
+              controls
+              preload="metadata"
+              class="preview-video"
+              @error="videoError = true"
+            ></video>
+            <video
+              v-else-if="previewSrc && !videoError"
               :src="previewSrc"
               controls
               preload="metadata"
@@ -100,10 +117,10 @@
             ></video>
             <div v-else class="video-placeholder">
               <el-icon :size="48"><IVideoCamera /></el-icon>
-              <span>{{ videoError ? '素材加载失败, 请稍后重试' : (composition ? '视频方案已生成' : '视频已生成') }}</span>
+              <span>{{ videoError ? '素材加载失败, 请稍后重试' : '视频方案已生成' }}</span>
             </div>
-            <p v-if="previewSrc" class="preview-hint">
-              预览来自素材库片段, 正式视频需后端执行 ffmpeg 命令合成
+            <p v-if="!renderedSrc" class="preview-hint">
+              下方为方案内第 1 段原始素材片段, 非最终成片
             </p>
           </div>
 
@@ -193,6 +210,14 @@
             <el-button type="primary" :loading="composing" @click="goGenerateVideo">
               {{ composition ? '重新生成方案' : '生成视频方案' }}
             </el-button>
+            <el-button
+              type="success"
+              :loading="rendering"
+              :disabled="!composition"
+              @click="goRenderVideo"
+            >
+              {{ renderedVideo ? '重新渲染' : '渲染最终视频' }}
+            </el-button>
             <el-button @click="goPublish">发布方案</el-button>
           </div>
         </div>
@@ -244,7 +269,7 @@ import {
   getTaskStatus, getTaskResult, getTaskScripts,
   type TaskStatus, type Script, type VideoInfo,
 } from '@/api/creation'
-import { composeVideo, type ComposeResult } from '@/api/video'
+import { composeVideo, renderVideo, type ComposeResult } from '@/api/video'
 
 const route = useRoute()
 const router = useRouter()
@@ -257,6 +282,9 @@ const video = ref<VideoInfo | null>(null)
 const activeScript = ref(0)
 const composition = ref<ComposeResult | null>(null)
 const videoError = ref(false)
+const rendering = ref(false)
+const renderedVideo = ref<{ video_id: number; output_url: string; duration: number } | null>(null)
+const renderedSrc = computed(() => renderedVideo.value ? `/static/output/${renderedVideo.value.output_url.split('/').pop()}` : null)
 const composing = ref(false)
 const editingScript = ref<number | null>(null)
 
@@ -458,6 +486,31 @@ function downloadVideo() {
   ElMessage.info('V1版本：FFmpeg命令已生成，可在后端执行合成')
 }
 
+function goRenderVideo() {
+  if (!composition.value) {
+    ElMessage.warning('请先生成视频方案')
+    return
+  }
+  if (!projectId.value || projectId.value <= 0) {
+    ElMessage.error('项目ID未加载，请稍候再试')
+    return
+  }
+  rendering.value = true
+  // 把 plan + 当前选中脚本文本透传给后端 (后端会烧字幕 + TTS 配音)
+  const scriptText = scripts.value[activeScript.value]?.content || ""
+  renderVideo(projectId.value, composition.value.plan, scriptText, true)
+    .then((res: any) => {
+      renderedVideo.value = res
+      ElMessage.success(`最终视频已生成 (${res.duration}s)`)
+    })
+    .catch((err: any) => {
+      ElMessage.error(extractApiError(err))
+    })
+    .finally(() => {
+      rendering.value = false
+    })
+}
+
 function goPublish() {
   ElMessage.info('发布功能开发中')
 }
@@ -529,6 +582,7 @@ function goPublish() {
 .script-actions { display: flex; gap: 10px; }
 
 .video-card { text-align: center; padding: 30px; }
+.video-alert { max-width: 480px; margin: 0 auto 16px; }
 .video-preview {
   max-width: 360px; max-height: 480px; min-height: 240px; margin: 0 auto 20px;
   background: linear-gradient(135deg, #667eea20, #764ba220);
