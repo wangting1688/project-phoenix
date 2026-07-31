@@ -106,6 +106,7 @@ class RenderRequest(BaseModel):
     plan: dict
     script_text: str = ""  # 用于 TTS 配音 (前端传当前选中的文案)
     with_tts: bool = True  # 是否启用 TTS 配音
+    voice_profile_id: Optional[int] = None  # 用 user 声纹 (C1 接入, 训练完成后用 cloned voice)
 
 
 @router.post("/render/{project_id}", response_model=ApiResponse[dict])
@@ -131,12 +132,25 @@ def render_final_video(
 
     backend_root = Path(__file__).resolve().parent.parent.parent
     try:
+        # 解析 voice_profile -> custom_speaker_id (active 状态才用)
+        custom_speaker_id = None
+        if body.voice_profile_id and body.with_tts:
+            from app.models import UserVoiceProfile
+            vp = db.query(UserVoiceProfile).filter(
+                UserVoiceProfile.id == body.voice_profile_id,
+                UserVoiceProfile.user_id == current_user.id,
+                UserVoiceProfile.status == "active",
+            ).first()
+            if vp:
+                custom_speaker_id = vp.custom_speaker_id
+
         result = do_render_video(
             plan=plan,
             project_id=project_id,
             user_id=current_user.id,
             storage_root=backend_root,
             tts_text=body.script_text if body.with_tts else None,
+            custom_speaker_id=custom_speaker_id,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

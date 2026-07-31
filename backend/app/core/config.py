@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     ARK_MODEL: Optional[str] = None
     ARK_TIMEOUT: int = 30
 
+    # 火山方舟豆包语音 TTS (Voice Cloning)
+    # 训练: POST /api/v3/tts/voice_clone
+    # 合成: POST /api/v3/tts (C2 阶段对接)
+    VOLC_TTS_BASE_URL: Optional[str] = None
+    VOLC_TTS_API_KEY: Optional[str] = None
+    VOLC_TTS_TIMEOUT: int = 60  # 训练接口 30s 内, 合成 10s, 给 60s 留余量
+
     class Config:
         env_file = ".env"
 

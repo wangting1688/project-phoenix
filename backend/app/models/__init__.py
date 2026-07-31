@@ -85,6 +85,7 @@ from app.models.video_production import (
 from app.models.ingest import DailyIngestSnapshot
 from app.models.platform_account import PlatformAccount
 from app.models.publish_task import PublishTask
+from app.models.voice_profile import UserVoiceProfile
 
 __all__ = [
     "User",
@@ -163,4 +164,5 @@ __all__ = [
     "DailyIngestSnapshot",
     "PlatformAccount",
     "PublishTask",
+    "UserVoiceProfile",
 ]
