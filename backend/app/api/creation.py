@@ -131,3 +131,34 @@ def get_project_scripts(
 
     scripts = db.query(Script).filter(Script.project_id == project_id).all()
     return ApiResponse(data=[ScriptResponse.model_validate(s) for s in scripts])
+
+
+@router.patch("/scripts/{script_id}", response_model=ApiResponse[ScriptResponse])
+def update_script_content(
+    script_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """更新文案内容 (供前端编辑 AI 文案后保存)"""
+    from app.models import Script, ContentProject
+
+    script = db.query(Script).filter(Script.id == script_id).first()
+    if not script:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    # 校验归属: 通过 project.user_id 间接确认
+    project = db.query(ContentProject).filter(
+        ContentProject.id == script.project_id,
+        ContentProject.user_id == current_user.id,
+    ).first()
+    if not project:
+        raise HTTPException(status_code=403, detail="无权限")
+
+    new_content = payload.get("content")
+    if not isinstance(new_content, str) or not new_content.strip():
+        raise HTTPException(status_code=400, detail="content 不能为空")
+
+    script.content = new_content
+    db.commit()
+    db.refresh(script)
+    return ApiResponse(data=ScriptResponse.model_validate(script))

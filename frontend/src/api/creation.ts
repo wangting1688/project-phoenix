@@ -64,3 +64,7 @@ export function getTaskResult(task_id: number) {
 export function getTaskScripts(task_id: number) {
   return request.get(`/tasks/${task_id}/scripts`)
 }
+
+export function updateScript(script_id: number, content: string) {
+  return request.patch(`/creation/scripts/${script_id}`, { content })
+}

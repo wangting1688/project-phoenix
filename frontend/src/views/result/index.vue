@@ -49,15 +49,36 @@
         <div v-if="scripts[activeScript]" class="script-card card">
           <div class="script-meta">
             <span class="score">评分: {{ scripts[activeScript].score }}</span>
+            <span v-if="editingScript === activeScript" class="editing-tip">编辑中</span>
           </div>
-          <div class="script-content">{{ scripts[activeScript].content }}</div>
+          <el-input
+            v-if="editingScript === activeScript"
+            v-model="editContent"
+            type="textarea"
+            :rows="10"
+            resize="vertical"
+            class="script-textarea"
+            placeholder="编辑文案内容"
+          />
+          <div v-else class="script-content">{{ scripts[activeScript].content }}</div>
           <div class="script-actions">
-            <el-button size="small" @click="copyScript(scripts[activeScript].content)">
-              <el-icon><ICopyDocument /></el-icon> 复制
-            </el-button>
-            <el-button size="small" type="primary" @click="goGenerateVideo(scripts[activeScript].id)">
-              生成视频方案
-            </el-button>
+            <template v-if="editingScript === activeScript">
+              <el-button size="small" @click="cancelEdit">取消</el-button>
+              <el-button size="small" type="primary" :loading="savingScript" @click="saveScript">
+                保存
+              </el-button>
+            </template>
+            <template v-else>
+              <el-button size="small" @click="copyScript(scripts[activeScript].content)">
+                <el-icon><ICopyDocument /></el-icon> 复制
+              </el-button>
+              <el-button size="small" @click="startEdit(activeScript)">
+                <el-icon><IDocument /></el-icon> 编辑
+              </el-button>
+              <el-button size="small" type="primary" @click="goGenerateVideo(scripts[activeScript].id)">
+                生成视频方案
+              </el-button>
+            </template>
           </div>
         </div>
       </div>
@@ -223,6 +244,9 @@ const video = ref<VideoInfo | null>(null)
 const activeScript = ref(0)
 const composition = ref<ComposeResult | null>(null)
 const composing = ref(false)
+const editingScript = ref<number | null>(null)
+const editContent = ref('')
+const savingScript = ref(false)
 const operationData = ref<any>({
   titles: [], hashtags: [], comment_strategy: [], private_message_guide: '',
 })
@@ -327,6 +351,35 @@ function getTypeName(type: string) {
     story: '故事型', knowledge: '知识型', chat: '聊天型',
   }
   return map[type] || type
+}
+
+function startEdit(index: number) {
+  editingScript.value = index
+  editContent.value = scripts.value[index]?.content || ''
+}
+function cancelEdit() {
+  editingScript.value = null
+  editContent.value = ''
+}
+async function saveScript() {
+  const s = scripts.value[editingScript.value ?? -1]
+  if (!s) return
+  if (!editContent.value.trim()) {
+    ElMessage.error('文案不能为空')
+    return
+  }
+  savingScript.value = true
+  try {
+    const { updateScript } = await import('@/api/creation')
+    await updateScript(s.id, editContent.value)
+    s.content = editContent.value
+    editingScript.value = null
+    ElMessage.success('文案已保存')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '保存失败')
+  } finally {
+    savingScript.value = false
+  }
 }
 
 function copyScript(content: string) {
