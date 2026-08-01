@@ -1,4 +1,6 @@
 from typing import Dict, Any, Optional
+import json
+import logging
 import re
 import random
 
@@ -7,6 +9,9 @@ from app.core.database import SessionLocal
 from app.models import ViralAnalysisSession, ViralPattern, ContentOpportunity, CreatorProfile
 from app.services.ai_service import AIService
 from app.services.prompt_service import PromptService
+
+
+logger = logging.getLogger(__name__)
 
 
 class ViralAnalysisService:
@@ -200,7 +205,90 @@ class ViralAnalysisService:
         return titles[hash(url) % len(titles)]
 
     def _run_ai_analysis(self, basic_info: Dict[str, Any], user_id: int) -> Dict[str, Any]:
-        """执行AI分析（模拟）"""
+        """执行AI分析: 调用大模型拆解爆款, 失败时降级为模拟结果"""
+        try:
+            prompt = self.prompt_service.get_prompt(
+                "viral_analysis_expert",
+                video_info=json.dumps(basic_info, ensure_ascii=False),
+                creator_info=json.dumps(self._get_creator_info(user_id), ensure_ascii=False),
+            )
+            raw = self.ai_service.generate(prompt)
+            result = self._normalize_analysis(raw, basic_info)
+            if result:
+                return result
+            logger.warning("AI 分析结果不可用, 降级为模拟: %s", str(raw)[:200])
+        except Exception as e:
+            logger.warning("AI 分析调用失败, 降级为模拟: %s", e)
+        return self._mock_analysis(basic_info)
+
+    def _get_creator_info(self, user_id: int) -> Dict[str, Any]:
+        """读取主播画像, 供 AI 提示词使用"""
+        profile = self.db.query(CreatorProfile).filter(
+            CreatorProfile.user_id == user_id
+        ).first()
+        if not profile:
+            return {}
+        return {
+            "age": profile.age,
+            "gender": profile.gender,
+            "style": profile.style,
+            "good_topics": profile.good_topics or [],
+            "category": getattr(profile, "category", None),
+        }
+
+    def _normalize_analysis(
+        self, raw: Any, basic_info: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """校验并规整 AI 返回, 字段缺失或结构不符时返回 None"""
+        if not isinstance(raw, dict) or "error" in raw or "raw" in raw:
+            return None
+        required = ("category", "hook_type", "hook", "pain_point", "summary")
+        if not all(isinstance(raw.get(k), str) and raw.get(k).strip() for k in required):
+            return None
+
+        def score(key: str, default: int) -> int:
+            try:
+                return max(0, min(100, int(float(raw.get(key, default)))))
+            except (TypeError, ValueError):
+                return default
+
+        structure = raw.get("content_structure")
+        if not isinstance(structure, dict) or not structure:
+            structure = {"opening": "", "middle": "", "ending": ""}
+
+        emotions = [e for e in (raw.get("emotions") or []) if isinstance(e, str)]
+        factors = [f for f in (raw.get("success_factors") or []) if isinstance(f, str)]
+
+        fit = raw.get("commercial_fit")
+        if not isinstance(fit, dict):
+            fit = {}
+        fit = {
+            "fit_for": [x for x in (fit.get("fit_for") or []) if isinstance(x, str)],
+            "not_fit_for": [x for x in (fit.get("not_fit_for") or []) if isinstance(x, str)],
+        }
+
+        return {
+            "basic_info": basic_info,
+            "content_structure": structure,
+            "hook_type": raw["hook_type"].strip(),
+            "hook": raw["hook"].strip(),
+            "viral_points": str(raw.get("viral_points") or "").strip(),
+            "viral_score": score("viral_score", 85),
+            "emotions": emotions,
+            "category": raw["category"].strip(),
+            "subcategory": str(raw.get("subcategory") or "").strip(),
+            "target_audience": str(raw.get("target_audience") or "").strip(),
+            "pain_point": raw["pain_point"].strip(),
+            "summary": raw["summary"].strip(),
+            "trend_score": score("trend_score", 80),
+            "consult_score": score("consult_score", 75),
+            "commercial_fit": fit,
+            "success_factors": factors,
+            "ai_generated": True,
+        }
+
+    def _mock_analysis(self, basic_info: Dict[str, Any]) -> Dict[str, Any]:
+        """AI 不可用时的降级结果"""
         hook_types = ["反常识提问", "痛点直击", "数据冲击", "案例引入", "悬念设置"]
         content_structures = [
             {"opening": "3秒制造疑问", "middle": "案例故事", "climax": "认知反转", "ending": "引导评论"},
@@ -238,6 +326,7 @@ class ViralAnalysisService:
                 "情感共鸣强烈",
                 "结尾引导互动",
             ],
+            "ai_generated": False,
         }
 
     def _calculate_creator_match(self, user_id: int, analysis: Dict[str, Any]) -> int:
@@ -263,7 +352,26 @@ class ViralAnalysisService:
         return min(100, score + random.randint(0, 10))
 
     def _generate_original_title(self, analysis: Dict[str, Any], creator_info: Dict[str, Any]) -> str:
-        """基于分析结果生成原创标题"""
+        """基于分析结果生成原创标题: 优先 AI, 失败降级为模板"""
+        try:
+            prompt = self.prompt_service.get_prompt(
+                "viral_title_expert",
+                original_title=(analysis.get("basic_info") or {}).get("title", ""),
+                analysis=json.dumps(analysis, ensure_ascii=False),
+                creator_info=json.dumps(creator_info, ensure_ascii=False),
+            )
+            raw = self.ai_service.generate(prompt)
+            if isinstance(raw, dict):
+                title = raw.get("title")
+                if isinstance(title, str) and 4 <= len(title.strip()) <= 60:
+                    return title.strip()
+            logger.warning("AI 标题结果不可用, 降级为模板: %s", str(raw)[:200])
+        except Exception as e:
+            logger.warning("AI 标题调用失败, 降级为模板: %s", e)
+        return self._mock_original_title(analysis, creator_info)
+
+    def _mock_original_title(self, analysis: Dict[str, Any], creator_info: Dict[str, Any]) -> str:
+        """AI 不可用时的降级标题"""
         gender = creator_info.get("gender", "")
         age = creator_info.get("age", "")
 

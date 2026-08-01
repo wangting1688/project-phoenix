@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     ARK_BASE_URL: Optional[str] = None
     ARK_API_KEY: Optional[str] = None
     ARK_MODEL: Optional[str] = None
-    ARK_TIMEOUT: int = 30
+    ARK_TIMEOUT: int = 120
 
     # 火山方舟豆包语音 TTS (Voice Cloning) — 独立新账号
     # 鉴权: 训练/合成都用 X-Api-Key header (新控制台)
