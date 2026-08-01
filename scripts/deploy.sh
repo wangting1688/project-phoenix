@@ -90,7 +90,7 @@ deploy_backend() {
   $SSH "bash -s" <<EOF
 set -e
 cd $REMOTE_ROOT/backend
-chown -R $RUN_USER:$RUN_USER app alembic requirements.txt alembic.ini 2>/dev/null || true
+chown -R $RUN_USER:$RUN_USER app alembic scripts requirements.txt alembic.ini run.py init_db.py 2>/dev/null || true
 find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 [ -d .venv ] || python3.11 -m venv .venv
 .venv/bin/pip install -q --upgrade pip
