@@ -103,9 +103,12 @@ def _volc_post(path: str, body: Dict[str, Any], timeout: int = None) -> Dict[str
 def _call_volc_train(profile: UserVoiceProfile, sample_bytes: bytes, sample_format: str,
                      reference_text: str = "") -> Dict[str, Any]:
     """
-    调火山方舟 voice_clone 训练接口
-    返回字段:
-      code (0=成功/业务错), status (1/2/3/4), message, available_training_times, demo_audio
+    调火山方舟 voice_clone 训练接口 (声音复刻 2.0, model_type=5)
+
+    要点 (实测):
+    - reference_text 必须与音频内容高度一致, 否则 45001109 WERError (阈值 0.25)
+    - 成功返回 icl_speaker_id (火山内部音色 ID), 合成时优先用它
+    - demo_audio 可能是 base64 或 speaker_status[].demo_audio 里的 URL
     """
     body = {
         "speaker_id": "custom_speaker_id",  # 固定值
@@ -116,38 +119,51 @@ def _call_volc_train(profile: UserVoiceProfile, sample_bytes: bytes, sample_form
         },
         "text": reference_text or profile.reference_text or "",
         "language": profile.language or 0,
-        "demo_text": profile.demo_text,
+        "extra_params": {
+            "model_type": 5,  # 复刻 2.0
+            "demo_text": profile.demo_text or "你好，这是我的专属声音测试。",
+        },
     }
-    resp = _volc_post("/api/v3/tts/voice_clone", body, timeout=30)
-    # 火山统一返回 {code, message, ...业务字段}
-    if resp.get("code") != 0 and resp.get("code") is not None:
-        # 业务错, 包装回, 让上层标记 failed
+    resp = _volc_post("/api/v3/tts/voice_clone", body, timeout=60)
+
+    if resp.get("code") not in (0, None):
         return {
             "code": resp.get("code", -1),
             "message": resp.get("message", "训练失败"),
             "status": 3,  # Failed
             "available_training_times": resp.get("available_training_times", 0),
             "demo_audio": None,
+            "icl_speaker_id": None,
         }
+
+    # 取 icl_speaker_id (优先顶层, 再看 speaker_status 里 model_type=5 的)
+    icl_id = resp.get("icl_speaker_id")
+    demo_url = None
+    for st in (resp.get("speaker_status") or []):
+        if st.get("model_type") == 5:
+            icl_id = st.get("icl_speaker_id") or icl_id
+            demo_url = st.get("demo_audio") or demo_url
     return {
         "code": 0,
         "message": resp.get("message", "ok"),
         "status": resp.get("status", 1),  # 1=Training 2=Success 3=Failed 4=Active
         "available_training_times": resp.get("available_training_times", 0),
         "demo_audio": resp.get("demo_audio"),
+        "demo_audio_url": demo_url,
+        "icl_speaker_id": icl_id,
     }
 
 
 # ===== TTS 合成接口 =====
 def _call_volc_synthesize(custom_speaker_id: str, text: str, lang: int = 0) -> Optional[bytes]:
     """
-    克隆音色合成 (声音复刻 2.0 走 WebSocket 双向流式)
-    需 volc.megatts.timbre 资源授权; 失败返回 None
+    克隆音色合成 (resource_id=volc.megatts.voiceclone, 实测正确)
+    失败返回 None, 由上层降级到官方音色
     """
     if not _is_volc_configured() or not custom_speaker_id:
         return None
-    from app.services.volc.tts_ws import synthesize_ws
-    return synthesize_ws(custom_speaker_id, text, encoding="mp3")
+    from app.services.volc.tts_http import synthesize_http, RESOURCE_CLONE_SYNTH
+    return synthesize_http(text, speaker=custom_speaker_id, resource_id=RESOURCE_CLONE_SYNTH)
 
 
 def _call_volc_official_tts(text: str) -> Optional[bytes]:
@@ -309,10 +325,29 @@ def train_voice(db, profile_id, user_id):
 
     if result.get("status") in (2, 4):  # Success / Active
         profile.status = "active"
+        # 火山内部音色 ID: 合成时用它 (比 custom_speaker_id 更可靠)
+        icl_id = result.get("icl_speaker_id")
+        if icl_id:
+            profile.icl_speaker_id = icl_id
+        # 试听音频: 优先 base64, 其次下载 URL
+        demo_path = _demos_dir(user_id) / f"{profile.id}.mp3"
+        saved = False
         demo_b64 = result.get("demo_audio")
         if demo_b64:
-            demo_path = _demos_dir(user_id) / f"{profile.id}.mp3"
-            demo_path.write_bytes(base64.b64decode(demo_b64))
+            try:
+                pad = demo_b64 + "=" * (-len(demo_b64) % 4)
+                demo_path.write_bytes(base64.b64decode(pad))
+                saved = demo_path.stat().st_size > 1024
+            except Exception:
+                saved = False
+        if not saved and result.get("demo_audio_url"):
+            try:
+                with urllib.request.urlopen(result["demo_audio_url"], timeout=20) as r:
+                    demo_path.write_bytes(r.read())
+                saved = True
+            except Exception:
+                saved = False
+        if saved:
             profile.demo_audio_path = str(demo_path)
     elif result.get("status") == 3:
         profile.status = "failed"
@@ -354,7 +389,10 @@ def test_synthesize(db, profile_id, user_id, text):
     ).first()
     if not profile:
         raise ValueError("声纹档案不存在")
-    custom_id = profile.custom_speaker_id if profile.status == "active" else None
+    # 优先 icl_speaker_id (火山内部 ID), 回退 custom_speaker_id
+    custom_id = None
+    if profile.status == "active":
+        custom_id = getattr(profile, "icl_speaker_id", None) or profile.custom_speaker_id
 
     out = _demos_dir(user_id) / f"test_{profile_id}_{int(time.time())}.mp3"
     return synthesize(

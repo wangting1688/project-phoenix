@@ -34,6 +34,7 @@ def _to_dict(p: UserVoiceProfile) -> dict:
         "id": p.id,
         "name": p.name,
         "custom_speaker_id": p.custom_speaker_id,
+        "icl_speaker_id": p.icl_speaker_id,
         "status": p.status,
         "volc_status": p.volc_status,
         "available_training_times": p.available_training_times,

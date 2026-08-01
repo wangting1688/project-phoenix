@@ -23,8 +23,9 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 PATH = "/api/v3/tts/unidirectional"
-RESOURCE_BIGTTS = "volc.service_type.10029"   # 大模型语音合成 (官方音色)
-RESOURCE_CLONE = "volc.megatts.timbre"        # 声音复刻 (自定义音色)
+RESOURCE_BIGTTS = "volc.service_type.10029"    # 大模型语音合成 (官方音色)
+RESOURCE_CLONE_TRAIN = "volc.megatts.timbre"   # 声音复刻 - 训练音色
+RESOURCE_CLONE_SYNTH = "volc.megatts.voiceclone"  # 声音复刻 - 合成 (实测正确)
 
 # 官方默认音色 (声纹未就绪时的兜底)
 DEFAULT_SPEAKER = "zh_female_shuangkuaisisi_moon_bigtts"

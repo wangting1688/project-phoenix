@@ -20,8 +20,12 @@ class UserVoiceProfile(Base, BaseModel):
     name = Column(String(100), nullable=False)
 
     # 火山方舟 custom_speaker_id (8-256 字符, 数字/大小写字母/-/_, 字母开头)
-    # 训练成功后由火山返回, 训练前为空
+    # 我方自定义, 训练时提交
     custom_speaker_id = Column(String(256), index=True, nullable=True)
+
+    # 火山内部音色 ID (训练成功后返回, e.g. ICL_uranus_xxx)
+    # 合成时优先用它
+    icl_speaker_id = Column(String(128), index=True, nullable=True)
 
     # 样本文件本地路径 (storage/voice_samples/{user_id}/{profile_id}.mp3)
     sample_path = Column(String(500), nullable=False)
