@@ -24,6 +24,53 @@
           <span class="tip-item">🔸 视频号</span>
         </div>
 
+        <div class="manual-section">
+          <div class="manual-head" @click="showManual = !showManual">
+            <span class="manual-title">
+              填写视频真实信息
+              <span class="manual-badge" :class="{ on: hasManualInput }">
+                {{ hasManualInput ? '已填写' : '建议填写' }}
+              </span>
+            </span>
+            <span class="manual-toggle">{{ showManual ? '收起' : '展开' }}</span>
+          </div>
+
+          <p class="manual-hint">
+            平台未开放视频数据接口，不填写时系统只能用示例数据分析，结论仅供参考。<br />
+            照着视频页面把标题和互动数抄进来，AI 才能给出贴合这条视频的拆解。
+          </p>
+
+          <div v-show="showManual" class="manual-form">
+            <div class="form-row">
+              <label>视频标题 <span class="req">*</span></label>
+              <el-input v-model="manual.title" placeholder="照抄视频的标题/首句文案" maxlength="200" />
+            </div>
+            <div class="form-grid">
+              <div class="form-row">
+                <label>时长(秒)</label>
+                <el-input v-model="manual.duration" type="number" placeholder="如 47" />
+              </div>
+              <div class="form-row">
+                <label>点赞数</label>
+                <el-input v-model="manual.like_count" type="number" placeholder="如 286000" />
+              </div>
+              <div class="form-row">
+                <label>评论数</label>
+                <el-input v-model="manual.comment_count" type="number" placeholder="如 9400" />
+              </div>
+              <div class="form-row">
+                <label>分享数</label>
+                <el-input v-model="manual.share_count" type="number" placeholder="如 15200" />
+              </div>
+              <div class="form-row">
+                <label>收藏数</label>
+                <el-input v-model="manual.collect_count" type="number" placeholder="如 31000" />
+              </div>
+            </div>
+            <p class="manual-note">数字带「万」的请换算成完整数字，例如 28.6万 填 286000。只填标题也可以。</p>
+          </div>
+        </div>
+
         <div class="action-area">
           <el-button
             type="primary"
@@ -291,6 +338,7 @@ import {
   generateOpportunity as apiGenerateOpportunity,
   type AnalysisResult,
   type OpportunityResult,
+  type VideoInfoInput,
 } from '@/api/viralAnalysis'
 
 const router = useRouter()
@@ -298,6 +346,34 @@ const router = useRouter()
 const step = ref<'input' | 'analyzing' | 'result' | 'opportunity'>('input')
 const videoUrl = ref('')
 const analyzing = ref(false)
+
+const showManual = ref(false)
+const manual = ref({
+  title: '',
+  duration: '',
+  like_count: '',
+  comment_count: '',
+  share_count: '',
+  collect_count: '',
+})
+const hasManualInput = computed(() => manual.value.title.trim().length > 0)
+
+function buildVideoInfo(): VideoInfoInput | undefined {
+  const title = manual.value.title.trim()
+  if (!title) return undefined
+  const toNum = (v: string) => {
+    const n = Number(v)
+    return v.trim() !== '' && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null
+  }
+  return {
+    title,
+    duration: toNum(manual.value.duration),
+    like_count: toNum(manual.value.like_count),
+    comment_count: toNum(manual.value.comment_count),
+    share_count: toNum(manual.value.share_count),
+    collect_count: toNum(manual.value.collect_count),
+  }
+}
 const analyzingStep = ref('正在分析链接...')
 const progressPercent = ref(0)
 const generating = ref(false)
@@ -326,7 +402,7 @@ const startAnalysis = async () => {
     progressPercent.value = 10
     await new Promise(r => setTimeout(r, 500))
 
-    const createRes = await createAnalysis(videoUrl.value.trim())
+    const createRes = await createAnalysis(videoUrl.value.trim(), buildVideoInfo())
     if (!createRes) {
       throw new Error('创建分析任务失败')
     }
@@ -453,6 +529,88 @@ const goBack = () => {
 .tip-item {
   font-size: 14px;
   color: #888;
+}
+
+.manual-section {
+  border: 1px solid #ebeef5;
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 22px;
+  background: #fafbfc;
+}
+
+.manual-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+}
+
+.manual-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manual-badge {
+  font-size: 12px;
+  font-weight: 400;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #fdf6ec;
+  color: #e6a23c;
+}
+
+.manual-badge.on {
+  background: #f0f9eb;
+  color: #67c23a;
+}
+
+.manual-toggle {
+  font-size: 13px;
+  color: #909399;
+}
+
+.manual-hint {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.7;
+  margin: 8px 0 0;
+}
+
+.manual-form {
+  margin-top: 14px;
+}
+
+.form-row {
+  margin-bottom: 12px;
+}
+
+.form-row label {
+  display: block;
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 6px;
+}
+
+.form-row .req {
+  color: #f56c6c;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0 12px;
+}
+
+.manual-note {
+  font-size: 12px;
+  color: #c0c4cc;
+  margin: 2px 0 0;
+  line-height: 1.6;
 }
 
 .action-area {

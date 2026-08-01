@@ -10,8 +10,19 @@ from app.services.viral_analysis_service import ViralAnalysisService
 router = APIRouter(prefix="/viral-analysis", tags=["AI爆款逆向工程"])
 
 
+class VideoInfoInput(BaseModel):
+    """用户手动录入的真实视频信息"""
+    title: str
+    duration: Optional[int] = None
+    like_count: Optional[int] = None
+    comment_count: Optional[int] = None
+    share_count: Optional[int] = None
+    collect_count: Optional[int] = None
+
+
 class CreateAnalysisRequest(BaseModel):
     video_url: str
+    video_info: Optional[VideoInfoInput] = None
 
 
 @router.post("/create")
@@ -22,7 +33,11 @@ async def create_analysis(
     """创建分析任务"""
     service = ViralAnalysisService()
     try:
-        session = service.create_analysis_session(current_user.id, request.video_url)
+        session = service.create_analysis_session(
+            current_user.id,
+            request.video_url,
+            video_info=request.video_info.model_dump() if request.video_info else None,
+        )
         return {
             "success": True,
             "data": {
@@ -30,6 +45,7 @@ async def create_analysis(
                 "video_url": session.video_url,
                 "platform": session.platform,
                 "status": session.status,
+                "data_source": (session.original_data or {}).get("data_source", "mock"),
             }
         }
     finally:

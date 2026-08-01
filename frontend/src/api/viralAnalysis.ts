@@ -65,13 +65,23 @@ export interface AnalysisSession {
   created_at: string
 }
 
-export function createAnalysis(video_url: string) {
+export interface VideoInfoInput {
+  title: string
+  duration?: number | null
+  like_count?: number | null
+  comment_count?: number | null
+  share_count?: number | null
+  collect_count?: number | null
+}
+
+export function createAnalysis(video_url: string, video_info?: VideoInfoInput) {
   return request.post<unknown, {
   session_id: number
   video_url: string
   platform: string
   status: string
-}>('/viral-analysis/create', { video_url })
+  data_source: string
+}>('/viral-analysis/create', video_info ? { video_url, video_info } : { video_url })
 }
 
 export function analyzeVideo(session_id: number) {

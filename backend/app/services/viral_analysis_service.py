@@ -28,20 +28,56 @@ class ViralAnalysisService:
         self.ai_service = AIService()
         self.prompt_service = PromptService(db=self.db)
 
-    def create_analysis_session(self, user_id: int, video_url: str) -> ViralAnalysisSession:
-        """创建分析会话"""
+    def create_analysis_session(
+        self,
+        user_id: int,
+        video_url: str,
+        video_info: Optional[Dict[str, Any]] = None,
+    ) -> ViralAnalysisSession:
+        """创建分析会话
+
+        video_info: 用户手动录入的真实视频信息, 传入后分析将基于真实数据
+        """
         platform = self._extract_platform(video_url)
-        
+
         session = ViralAnalysisSession(
             user_id=user_id,
             video_url=video_url,
             platform=platform,
             status="pending",
         )
+        if video_info and str(video_info.get("title") or "").strip():
+            session.original_data = self._build_basic_info(video_info, video_url, platform)
         self.db.add(session)
         self.db.commit()
         self.db.refresh(session)
         return session
+
+    def _build_basic_info(
+        self, video_info: Dict[str, Any], video_url: str, platform: str
+    ) -> Dict[str, Any]:
+        """把用户录入整理成分析所需的 basic_info, 并标记数据来源"""
+
+        def num(key: str) -> Optional[int]:
+            v = video_info.get(key)
+            if v in (None, ""):
+                return None
+            try:
+                return max(0, int(v))
+            except (TypeError, ValueError):
+                return None
+
+        title = str(video_info.get("title") or "").strip()
+        return {
+            "title": title,
+            "platform": platform,
+            "duration": num("duration"),
+            "like_count": num("like_count"),
+            "comment_count": num("comment_count"),
+            "share_count": num("share_count"),
+            "collect_count": num("collect_count"),
+            "data_source": "manual",
+        }
 
     def analyze_video(self, session_id: int) -> Dict[str, Any]:
         """执行完整分析流程"""
@@ -55,8 +91,12 @@ class ViralAnalysisService:
         session.status = "analyzing"
         self.db.commit()
 
-        # 1. 获取基础信息
-        basic_info = self._extract_basic_info(session.video_url)
+        # 1. 获取基础信息: 优先用创建时录入的真实数据, 否则回落模拟
+        basic_info = session.original_data or {}
+        if basic_info.get("data_source") == "manual" and basic_info.get("title"):
+            basic_info = {k: v for k, v in basic_info.items() if v is not None}
+        else:
+            basic_info = self._extract_basic_info(session.video_url)
         session.original_data = basic_info
 
         # 2. AI内容分析
@@ -177,7 +217,7 @@ class ViralAnalysisService:
         return "未知"
 
     def _extract_basic_info(self, url: str) -> Dict[str, Any]:
-        """提取视频基础信息（模拟，实际应调用平台API）"""
+        """提取视频基础信息（模拟，用户未录入真实数据时的回落）"""
         return {
             "title": self._generate_mock_title(url),
             "platform": self._extract_platform(url),
@@ -186,6 +226,7 @@ class ViralAnalysisService:
             "comment_count": random.randint(500, 20000),
             "share_count": random.randint(1000, 50000),
             "collect_count": random.randint(500, 30000),
+            "data_source": "mock",
         }
 
     def _generate_mock_title(self, url: str) -> str:
