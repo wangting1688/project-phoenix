@@ -24,7 +24,7 @@ export interface CurrentUserResponse {
   }
 }
 
-// ========== 渠道商 ==========
+// ========== 用户（账号主体 / 租户） ==========
 export interface Tenant {
   id: number
   name: string

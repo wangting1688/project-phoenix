@@ -1,8 +1,8 @@
 """
-渠道商管理 API
+用户管理 API
 
-总部管理员：创建/管理渠道商账号
-渠道商：登录、管理子用户
+总部管理员：创建/管理用户账号
+用户：登录、管理子账号
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
@@ -20,10 +20,10 @@ from app.services import tenant_service
 from app.api.deps import get_current_user, get_current_super_admin
 from app.models import User
 
-router = APIRouter(prefix="/tenants", tags=["渠道商管理"])
+router = APIRouter(prefix="/tenants", tags=["用户管理"])
 
 
-# ========== 总部管理员：渠道商 CRUD ==========
+# ========== 总部管理员：用户 CRUD ==========
 
 @router.post("/", response_model=ApiResponse[TenantResponse])
 def create_tenant(
@@ -31,7 +31,7 @@ def create_tenant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_super_admin),
 ):
-    """创建渠道商（仅总部管理员）"""
+    """创建用户（仅总部管理员）"""
     try:
         tenant = tenant_service.create_tenant(db, tenant_in)
     except ValueError as e:
@@ -46,7 +46,7 @@ def list_tenants(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_super_admin),
 ):
-    """获取渠道商列表（仅总部管理员）"""
+    """获取用户列表（仅总部管理员）"""
     items, total = tenant_service.list_tenants(db, skip=skip, limit=limit)
     return ApiResponse(data=TenantListResponse(
         items=[TenantResponse.model_validate(t) for t in items],
@@ -60,10 +60,10 @@ def get_tenant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_super_admin),
 ):
-    """获取渠道商详情（仅总部管理员）"""
+    """获取用户详情（仅总部管理员）"""
     tenant = tenant_service.get_tenant_by_id(db, tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="渠道商不存在")
+        raise HTTPException(status_code=404, detail="用户不存在")
     return ApiResponse(data=TenantResponse.model_validate(tenant))
 
 
@@ -74,10 +74,10 @@ def update_tenant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_super_admin),
 ):
-    """更新渠道商（仅总部管理员）"""
+    """更新用户（仅总部管理员）"""
     tenant = tenant_service.update_tenant(db, tenant_id, tenant_in)
     if not tenant:
-        raise HTTPException(status_code=404, detail="渠道商不存在")
+        raise HTTPException(status_code=404, detail="用户不存在")
     return ApiResponse(data=TenantResponse.model_validate(tenant))
 
 
@@ -87,30 +87,30 @@ def delete_tenant(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_super_admin),
 ):
-    """停用渠道商（仅总部管理员）"""
+    """停用用户（仅总部管理员）"""
     tenant = tenant_service.get_tenant_by_id(db, tenant_id)
     if not tenant:
-        raise HTTPException(status_code=404, detail="渠道商不存在")
+        raise HTTPException(status_code=404, detail="用户不存在")
     tenant.status = 0
     db.commit()
-    return ApiResponse(data={"message": "渠道商已停用"})
+    return ApiResponse(data={"message": "用户已停用"})
 
 
-# ========== 渠道商登录 ==========
+# ========== 用户登录 ==========
 
 @router.post("/login", response_model=ApiResponse[TenantLoginResponse])
 def tenant_login(
     login_in: TenantLogin,
     db: Session = Depends(get_db),
 ):
-    """渠道商登录（使用账号+密码）"""
+    """用户登录（使用账号+密码）"""
     tenant = tenant_service.authenticate_tenant(db, login_in.account, login_in.password)
     if not tenant:
         raise HTTPException(
             status_code=401,
-            detail="账号或密码错误，或渠道商已停用/过期",
+            detail="账号或密码错误，或用户已停用/过期",
         )
-    # 生成渠道商 token（sub=tenant:{id}）
+    # 生成账号主体 token（sub=tenant:{id}）
     access_token = create_access_token(
         data={"sub": f"tenant:{tenant.id}", "type": "tenant"},
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -121,7 +121,7 @@ def tenant_login(
     ))
 
 
-# ========== 渠道商：管理子用户 ==========
+# ========== 用户：管理子账号 ==========
 
 @router.post("/{tenant_id}/users", response_model=ApiResponse[dict])
 def create_tenant_user(
@@ -130,14 +130,14 @@ def create_tenant_user(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """渠道商创建子用户（需渠道管理员或总部管理员）"""
-    # 权限检查：总部管理员放行；否则必须是该渠道商下的渠道管理员
+    """创建子账号（需用户管理员或总部管理员）"""
+    # 权限检查：总部管理员放行；否则必须是该用户下的管理员
     if current_user.role != "super_admin":
         if current_user.role != "tenant_admin":
-            raise HTTPException(status_code=403, detail="需要渠道管理员权限")
+            raise HTTPException(status_code=403, detail="需要用户管理员权限")
         if current_user.tenant_id != tenant_id:
-            raise HTTPException(status_code=403, detail="无权操作此渠道商")
-    # 渠道管理员不得创建总部管理员, 防止提权
+            raise HTTPException(status_code=403, detail="无权操作此用户")
+    # 用户管理员不得创建总部管理员, 防止提权
     if user_in.role == "super_admin" and current_user.role != "super_admin":
         raise HTTPException(status_code=403, detail="无权创建总部管理员")
 
@@ -158,10 +158,10 @@ def list_tenant_users(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """获取渠道商下的用户列表"""
+    """获取该用户下的子账号列表"""
     # 权限检查
     if current_user.tenant_id != tenant_id and current_user.role != "super_admin":
-        raise HTTPException(status_code=403, detail="无权操作此渠道商")
+        raise HTTPException(status_code=403, detail="无权操作此用户")
 
     users = db.query(User).filter(User.tenant_id == tenant_id).all()
     return ApiResponse(data={

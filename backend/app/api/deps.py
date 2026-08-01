@@ -33,7 +33,7 @@ async def get_current_user(
     if isinstance(user_id, str) and user_id.startswith("tenant:"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="渠道商Token不能用于用户接口，请使用用户登录",
+            detail="该Token为账号主体登录凭证，不能用于子账号接口",
         )
 
     user = user_service.get_user_by_id(db, user_id=int(user_id))
@@ -48,12 +48,12 @@ async def get_current_user(
             detail="User account is disabled",
         )
 
-    # SaaS：校验渠道商状态和期限
+    # SaaS：校验所属账号状态和期限
     if user.tenant_id and user.role != "super_admin":
         if tenant_service.check_tenant_expired(db, user.tenant_id):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="渠道商已停用或已过期",
+                detail="所属账号已停用或已过期",
             )
 
     return user
@@ -80,10 +80,10 @@ async def get_current_super_admin(
 async def get_tenant_admin(
     current_user: User = Depends(get_current_user),
 ) -> User:
-    """渠道管理员或总部管理员"""
+    """用户管理员或总部管理员"""
     if current_user.role not in ("super_admin", "tenant_admin"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="需要渠道管理员权限",
+            detail="需要用户管理员权限",
         )
     return current_user

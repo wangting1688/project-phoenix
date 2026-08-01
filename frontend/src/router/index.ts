@@ -142,10 +142,10 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '发布中心', requiresAuth: true },
       },
       {
-        path: 'tenant-manage',
-        name: 'TenantManage',
+        path: 'user-manage',
+        name: 'UserManage',
         component: () => import('@/views/tenantManage/index.vue'),
-        meta: { title: '渠道商管理', requiresAuth: true, roles: ['super_admin'] },
+        meta: { title: '用户管理', requiresAuth: true, roles: ['super_admin'] },
       },
     ],
   },

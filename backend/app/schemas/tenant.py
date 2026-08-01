@@ -1,5 +1,5 @@
 """
-渠道商 Schemas
+用户 Schemas
 """
 
 from pydantic import BaseModel, Field
@@ -8,9 +8,9 @@ from datetime import datetime
 
 
 class TenantCreate(BaseModel):
-    """创建渠道商"""
-    name: str = Field(..., max_length=200, description="渠道商名称")
-    code: str = Field(..., max_length=50, description="渠道商编码")
+    """创建用户"""
+    name: str = Field(..., max_length=200, description="用户名称")
+    code: Optional[str] = Field(default=None, max_length=50, description="用户编码 (留空则按新增顺序自动生成)")
     account: str = Field(..., max_length=100, description="登录账号")
     password: str = Field(..., min_length=6, max_length=100, description="登录密码")
     contact_name: Optional[str] = None
@@ -22,7 +22,7 @@ class TenantCreate(BaseModel):
 
 
 class TenantUpdate(BaseModel):
-    """更新渠道商"""
+    """更新用户"""
     name: Optional[str] = None
     contact_name: Optional[str] = None
     contact_phone: Optional[str] = None
@@ -34,7 +34,7 @@ class TenantUpdate(BaseModel):
 
 
 class TenantResponse(BaseModel):
-    """渠道商响应"""
+    """用户响应"""
     id: int
     name: str
     code: str
@@ -58,23 +58,23 @@ class TenantListResponse(BaseModel):
     total: int
 
 
-# ========== 渠道商登录 ==========
+# ========== 用户登录 ==========
 class TenantLogin(BaseModel):
-    """渠道商登录"""
+    """用户登录"""
     account: str
     password: str
 
 
 class TenantLoginResponse(BaseModel):
-    """渠道商登录响应"""
+    """用户登录响应"""
     token: str
     tenant: TenantResponse
 
 
-# ========== 渠道用户管理 ==========
+# ========== 子账号管理 ==========
 class TenantUserCreate(BaseModel):
-    """渠道商创建子用户"""
+    """创建子账号"""
     phone: str = Field(..., max_length=20)
     password: str = Field(..., min_length=6, max_length=100)
     nickname: Optional[str] = None
-    role: str = Field(default="anchor", description="anchor=主播, tenant_admin=渠道管理员")
+    role: str = Field(default="anchor", description="anchor=主播, tenant_admin=用户管理员")

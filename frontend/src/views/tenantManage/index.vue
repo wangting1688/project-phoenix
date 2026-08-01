@@ -1,16 +1,16 @@
 <template>
   <div class="tenant-manage">
     <div class="page-header">
-      <h2>渠道商管理</h2>
+      <h2>用户管理</h2>
       <el-button type="primary" @click="showCreateDialog">
         <el-icon><Plus /></el-icon>
-        新增渠道商
+        新增用户
       </el-button>
     </div>
 
-    <!-- 渠道商列表 -->
+    <!-- 用户列表 -->
     <el-table :data="tenants" v-loading="loading" border style="width: 100%">
-      <el-table-column prop="name" label="渠道商名称" min-width="150" />
+      <el-table-column prop="name" label="用户名称" min-width="150" />
       <el-table-column prop="code" label="编码" width="120" />
       <el-table-column prop="account" label="登录账号" width="140" />
       <el-table-column prop="contact_name" label="联系人" width="100" />
@@ -30,7 +30,7 @@
           <span v-else style="color: #67c23a">永久</span>
         </template>
       </el-table-column>
-      <el-table-column prop="max_users" label="用户配额" width="90" />
+      <el-table-column prop="max_users" label="子账号配额" width="90" />
       <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
           <el-button size="small" @click="showUsersDialog(row)">用户管理</el-button>
@@ -40,21 +40,25 @@
       </el-table-column>
     </el-table>
 
-    <!-- 创建/编辑渠道商对话框 -->
+    <!-- 创建/编辑用户对话框 -->
     <el-dialog
       v-model="dialogVisible"
-      :title="editingId ? '编辑渠道商' : '新增渠道商'"
+      :title="editingId ? '编辑用户' : '新增用户'"
       width="600px"
     >
       <el-form :model="formData" label-width="120px" ref="formRef" :rules="formRules">
-        <el-form-item label="渠道商名称" prop="name">
+        <el-form-item label="用户名称" prop="name">
           <el-input v-model="formData.name" placeholder="如：杭州健康频道" :disabled="!!editingId" />
         </el-form-item>
-        <el-form-item label="渠道商编码" prop="code">
-          <el-input v-model="formData.code" placeholder="如：HZ001" :disabled="!!editingId" />
+        <el-form-item label="用户编码">
+          <el-input
+            v-model="formData.code"
+            :placeholder="editingId ? '' : '保存后按新增顺序自动生成（如 U0001）'"
+            disabled
+          />
         </el-form-item>
         <el-form-item label="登录账号" prop="account">
-          <el-input v-model="formData.account" placeholder="渠道商登录账号" :disabled="!!editingId" />
+          <el-input v-model="formData.account" placeholder="登录账号" :disabled="!!editingId" />
         </el-form-item>
         <el-form-item v-if="!editingId" label="登录密码" prop="password">
           <el-input v-model="formData.password" type="password" placeholder="至少6位" show-password />
@@ -75,7 +79,7 @@
             style="width: 100%"
           />
         </el-form-item>
-        <el-form-item label="用户配额">
+        <el-form-item label="子账号配额">
           <el-input-number v-model="formData.max_users" :min="1" :max="1000" />
           <span style="margin-left: 10px; color: #909399; font-size: 13px">个</span>
         </el-form-item>
@@ -104,7 +108,7 @@
         <el-table-column prop="role" label="角色" width="120">
           <template #default="{ row }">
             <el-tag :type="row.role === 'tenant_admin' ? 'warning' : ''" size="small">
-              {{ row.role === 'tenant_admin' ? '渠道管理员' : '主播' }}
+              {{ row.role === 'tenant_admin' ? '用户管理员' : '主播' }}
             </el-tag>
           </template>
         </el-table-column>
@@ -132,7 +136,7 @@
           <el-form-item label="角色">
             <el-select v-model="newUser.role" style="width: 120px">
               <el-option label="主播" value="anchor" />
-              <el-option label="渠道管理员" value="tenant_admin" />
+              <el-option label="用户管理员" value="tenant_admin" />
             </el-select>
           </el-form-item>
           <el-button type="primary" @click="handleCreateUser" :loading="saving">创建</el-button>
@@ -170,8 +174,7 @@ const formData = reactive({
 })
 
 const formRules: FormRules = {
-  name: [{ required: true, message: '请输入渠道商名称', trigger: 'blur' }],
-  code: [{ required: true, message: '请输入渠道商编码', trigger: 'blur' }],
+  name: [{ required: true, message: '请输入用户名称', trigger: 'blur' }],
   account: [{ required: true, message: '请输入登录账号', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }, { min: 6, message: '至少6位', trigger: 'blur' }],
 }
@@ -194,7 +197,7 @@ async function fetchTenants() {
     const res = await listTenants()
     tenants.value = res.items
   } catch (error) {
-    ElMessage.error('获取渠道商列表失败')
+    ElMessage.error('获取用户列表失败')
   } finally {
     loading.value = false
   }
@@ -242,7 +245,9 @@ async function handleSave() {
       })
       ElMessage.success('更新成功')
     } else {
-      await createTenant(formData as any)
+      // code 由后端按新增顺序自动生成, 不提交前端占位值
+      const { code: _ignored, ...payload } = formData
+      await createTenant(payload as any)
       ElMessage.success('创建成功')
     }
     dialogVisible.value = false
@@ -256,7 +261,7 @@ async function handleSave() {
 
 async function handleDisable(row: Tenant) {
   try {
-    await ElMessageBox.confirm(`确认停用渠道商「${row.name}」？停用后该渠道商下所有用户将无法登录`, '确认停用', {
+    await ElMessageBox.confirm(`确认停用用户「${row.name}」？停用后该用户及其所有子账号将无法登录`, '确认停用', {
       type: 'warning',
     })
     await deleteTenant(row.id)

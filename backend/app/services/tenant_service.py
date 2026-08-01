@@ -1,7 +1,7 @@
 """
-渠道商服务层
+用户服务层
 
-管理渠道商的创建、查询、认证、状态管理。
+管理用户（账号主体）的创建、查询、认证、状态管理。
 """
 
 from sqlalchemy.orm import Session
@@ -32,16 +32,35 @@ def list_tenants(db: Session, skip: int = 0, limit: int = 100) -> tuple[List[Ten
     return items, total
 
 
+CODE_PREFIX = "U"
+CODE_DIGITS = 4
+
+
+def generate_next_code(db: Session) -> str:
+    """按新增顺序生成用户编码: U0001, U0002 ...
+
+    取现有最大序号 +1, 而非用总数, 避免删除后编码重复。
+    """
+    rows = db.query(Tenant.code).filter(Tenant.code.like(f"{CODE_PREFIX}%")).all()
+    max_seq = 0
+    for (code,) in rows:
+        suffix = (code or "")[len(CODE_PREFIX):]
+        if suffix.isdigit():
+            max_seq = max(max_seq, int(suffix))
+    return f"{CODE_PREFIX}{max_seq + 1:0{CODE_DIGITS}d}"
+
+
 def create_tenant(db: Session, tenant_in: TenantCreate) -> Tenant:
-    # 检查编码和账号唯一性
-    if get_tenant_by_code(db, tenant_in.code):
-        raise ValueError("渠道商编码已存在")
+    # 编码留空则按新增顺序自动生成
+    code = (tenant_in.code or "").strip() or generate_next_code(db)
+    if get_tenant_by_code(db, code):
+        raise ValueError("用户编码已存在")
     if get_tenant_by_account(db, tenant_in.account):
         raise ValueError("登录账号已存在")
 
     tenant = Tenant(
         name=tenant_in.name,
-        code=tenant_in.code,
+        code=code,
         account=tenant_in.account,
         password_hash=get_password_hash(tenant_in.password),
         contact_name=tenant_in.contact_name,
@@ -93,13 +112,13 @@ def count_tenant_users(db: Session, tenant_id: int) -> int:
 
 def create_tenant_user(db: Session, tenant_id: int, phone: str, password: str,
                        nickname: str = None, role: str = "anchor") -> User:
-    """渠道商创建子用户"""
+    """创建子账号"""
     tenant = get_tenant_by_id(db, tenant_id)
     if not tenant:
-        raise ValueError("渠道商不存在")
+        raise ValueError("用户不存在")
 
     if not tenant.is_active():
-        raise ValueError("渠道商已停用或过期")
+        raise ValueError("用户已停用或过期")
 
     # 检查用户数限制
     current_count = count_tenant_users(db, tenant_id)
@@ -126,7 +145,7 @@ def create_tenant_user(db: Session, tenant_id: int, phone: str, password: str,
 
 
 def check_tenant_expired(db: Session, tenant_id: int) -> bool:
-    """检查渠道商是否过期，自动更新状态"""
+    """检查用户是否过期，自动更新状态"""
     tenant = get_tenant_by_id(db, tenant_id)
     if not tenant:
         return True

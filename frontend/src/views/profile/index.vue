@@ -105,12 +105,12 @@
           </div>
         </div>
 
-        <!-- 总部管理员：渠道商管理 -->
+        <!-- 总部管理员：用户管理 -->
         <div v-if="isSuperAdmin" class="menu-card card">
-          <div class="menu-item" @click="$router.push('/tenant-manage')">
+          <div class="menu-item" @click="$router.push('/user-manage')">
             <div class="menu-left">
               <el-icon :size="20" class="menu-icon purple"><IOffice /></el-icon>
-              <span>渠道商管理</span>
+              <span>用户管理</span>
             </div>
             <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
           </div>
