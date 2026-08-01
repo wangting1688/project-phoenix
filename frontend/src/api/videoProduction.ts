@@ -128,128 +128,82 @@ export function createProductionJob(data: {
   target_platforms?: string[]
   job_type?: string
 }) {
-  return request.post<{
-    success: boolean
-    data: {
-      job_id: number
-      title: string
-      status: string
-      created_at: string
-    }
-  }>('/video-production/jobs', null, { params: data })
+  return request.post<unknown, {
+  job_id: number
+  title: string
+  status: string
+  created_at: string
+}>('/video-production/jobs', null, { params: data })
 }
 
 export function getProductionJobs(status?: string, page?: number, page_size?: number) {
-  return request.get<{
-    success: boolean
-    data: {
-      jobs: ProductionJob[]
-      total: number
-      page: number
-      page_size: number
-    }
-  }>('/video-production/jobs', { params: { status, page, page_size } })
+  return request.get<unknown, {
+  jobs: ProductionJob[]
+  total: number
+  page: number
+  page_size: number
+}>('/video-production/jobs', { params: { status, page, page_size } })
 }
 
 export function getProductionJob(jobId: number) {
-  return request.get<{
-    success: boolean
-    data: ProductionJob
-  }>(`/video-production/jobs/${jobId}`)
+  return request.get<unknown, ProductionJob>(`/video-production/jobs/${jobId}`)
 }
 
 export function updateJobStatus(jobId: number, status: string) {
-  return request.put<{
-    success: boolean
-    data: {
-      job_id: number
-      status: string
-    }
-  }>(`/video-production/jobs/${jobId}/status`, null, { params: { status } })
+  return request.put<unknown, {
+  job_id: number
+  status: string
+}>(`/video-production/jobs/${jobId}/status`, null, { params: { status } })
 }
 
 export function generateTimeline(jobId: number) {
-  return request.post<{
-    success: boolean
-    message: string
-    data: Record<string, any>
-  }>(`/video-production/jobs/${jobId}/timeline`)
+  return request.post<unknown, Record<string, any>>(`/video-production/jobs/${jobId}/timeline`)
 }
 
 export function getJobTimeline(jobId: number) {
-  return request.get<{
-    success: boolean
-    data: VideoTimeline[]
-  }>(`/video-production/jobs/${jobId}/timeline`)
+  return request.get<unknown, VideoTimeline[]>(`/video-production/jobs/${jobId}/timeline`)
 }
 
 export function matchMaterials(jobId: number) {
-  return request.post<{
-    success: boolean
-    message: string
-    data: Record<string, any>
-  }>(`/video-production/jobs/${jobId}/match-materials`)
+  return request.post<unknown, Record<string, any>>(`/video-production/jobs/${jobId}/match-materials`)
 }
 
 export function generateClipProject(jobId: number) {
-  return request.post<{
-    success: boolean
-    message: string
-    data: Record<string, any>
-  }>(`/video-production/jobs/${jobId}/clip-project`)
+  return request.post<unknown, Record<string, any>>(`/video-production/jobs/${jobId}/clip-project`)
 }
 
 export function generateVariants(jobId: number, platforms?: string[]) {
-  return request.post<{
-    success: boolean
-    message: string
-    data: Record<string, any>
-  }>(`/video-production/jobs/${jobId}/variants`, null, { params: { platforms } })
+  return request.post<unknown, Record<string, any>>(`/video-production/jobs/${jobId}/variants`, null, { params: { platforms } })
 }
 
 export function getJobVariants(jobId: number) {
-  return request.get<{
-    success: boolean
-    data: VideoVariant[]
-  }>(`/video-production/jobs/${jobId}/variants`)
+  return request.get<unknown, VideoVariant[]>(`/video-production/jobs/${jobId}/variants`)
 }
 
 export function checkBlockTasks(jobId: number) {
-  return request.post<{
-    success: boolean
-    data: {
-      block_count: number
-      tasks: ProductionBlockTask[]
-    }
-  }>(`/video-production/jobs/${jobId}/check-blocks`)
+  return request.post<unknown, {
+  block_count: number
+  tasks: ProductionBlockTask[]
+}>(`/video-production/jobs/${jobId}/check-blocks`)
 }
 
 export function getBlockTasks(status?: string) {
-  return request.get<{
-    success: boolean
-    data: ProductionBlockTask[]
-  }>('/video-production/block-tasks', { params: { status } })
+  return request.get<unknown, ProductionBlockTask[]>('/video-production/block-tasks', { params: { status } })
 }
 
 export function resolveBlockTask(taskId: number, collectionTaskId?: number) {
-  return request.put<{
-    success: boolean
-    data: {
-      task_id: number
-      status: string
-    }
-  }>(`/video-production/block-tasks/${taskId}/resolve`, null, { params: { collection_task_id: collectionTaskId } })
+  return request.put<unknown, {
+  task_id: number
+  status: string
+}>(`/video-production/block-tasks/${taskId}/resolve`, null, { params: { collection_task_id: collectionTaskId } })
 }
 
 export function getProductionStats() {
-  return request.get<{
-    success: boolean
-    data: {
-      total_jobs: number
-      completed_jobs: number
-      blocked_jobs: number
-      total_variants: number
-      completion_rate: number
-    }
-  }>('/video-production/stats')
+  return request.get<unknown, {
+  total_jobs: number
+  completed_jobs: number
+  blocked_jobs: number
+  total_variants: number
+  completion_rate: number
+}>('/video-production/stats')
 }

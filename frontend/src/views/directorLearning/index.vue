@@ -315,8 +315,8 @@ const formatRecommendation = (rec: Record<string, any>) => {
 const loadStats = async () => {
   try {
     const res = await getLearningStats()
-    if (res.data.success) {
-      stats.value = res.data.data
+    if (res) {
+      stats.value = res
     }
   } catch (e) {
     console.error('Load stats failed:', e)
@@ -326,8 +326,8 @@ const loadStats = async () => {
 const loadMemories = async () => {
   try {
     const res = await getLearningMemories(undefined, undefined, 50)
-    if (res.data.success) {
-      memories.value = res.data.data
+    if (res) {
+      memories.value = res
     }
   } catch (e) {
     console.error('Load memories failed:', e)
@@ -337,8 +337,8 @@ const loadMemories = async () => {
 const loadCreatorProfile = async () => {
   try {
     const res = await getCreatorStrategy()
-    if (res.data.success) {
-      creatorProfile.value = res.data.data
+    if (res) {
+      creatorProfile.value = res
     }
   } catch (e) {
     console.error('Load creator strategy failed:', e)
@@ -348,8 +348,8 @@ const loadCreatorProfile = async () => {
 const loadPlatformProfiles = async () => {
   try {
     const res = await getPlatformStrategies()
-    if (res.data.success) {
-      platformProfiles.value = res.data.data
+    if (res) {
+      platformProfiles.value = res
     }
   } catch (e) {
     console.error('Load platform strategies failed:', e)
@@ -359,8 +359,8 @@ const loadPlatformProfiles = async () => {
 const loadWeights = async () => {
   try {
     const res = await getPhoenixCommercialWeights()
-    if (res.data.success) {
-      weightsData.value = res.data.data
+    if (res) {
+      weightsData.value = res
     }
   } catch (e) {
     console.error('Load weights failed:', e)

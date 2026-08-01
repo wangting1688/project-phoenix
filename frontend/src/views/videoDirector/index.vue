@@ -391,8 +391,8 @@ const getTransitionLabel = (transition: string) => {
 const loadPlans = async () => {
   try {
     const res = await getPlans()
-    if (res.data.success) {
-      plans.value = res.data.data
+    if (res) {
+      plans.value = res
     }
   } catch (error) {
     console.error('Load plans failed:', error)
@@ -402,8 +402,8 @@ const loadPlans = async () => {
 const loadStats = async () => {
   try {
     const res = await getDirectorStats()
-    if (res.data.success) {
-      stats.value = res.data.data
+    if (res) {
+      stats.value = res
     }
   } catch (error) {
     console.error('Load stats failed:', error)
@@ -423,8 +423,8 @@ const handleGenerate = async () => {
       target_duration: generateForm.value.target_duration,
       strategy: generateForm.value.strategy,
     })
-    if (res.data.success) {
-      ElMessage.success(res.data.message)
+    if (res) {
+      ElMessage.success('操作成功')
       showGenerateDialog.value = false
       generateForm.value.script_content = ''
       loadPlans()
@@ -458,12 +458,12 @@ const getScoreLabel = (key: string) => {
 const checkShootingStatus = async (planId: number) => {
   try {
     const res = await getShootingTasksStatus(planId)
-    if (res.data.success) {
-      shootingStatus.value = res.data.data
-      if (res.data.data.all_completed) {
+    if (res) {
+      shootingStatus.value = res
+      if (res.all_completed) {
         ElMessage.success('所有补拍任务已完成，可以重新生成方案')
       } else {
-        ElMessage.info(`补拍进度：${res.data.data.completed_count}/${res.data.data.total_tasks}已完成`)
+        ElMessage.info(`补拍进度：${res.completed_count}/${res.total_tasks}已完成`)
       }
     }
   } catch (error) {
@@ -474,14 +474,14 @@ const checkShootingStatus = async (planId: number) => {
 const handleRegenerate = async (planId: number) => {
   try {
     const res = await regeneratePlan(planId)
-    if (res.data.success) {
-      ElMessage.success(res.data.message)
-      selectedPlan.value = res.data.data as VideoEditPlan
+    if (res) {
+      ElMessage.success('操作成功')
+      selectedPlan.value = res as VideoEditPlan
       shootingStatus.value = null
       loadPlans()
       loadStats()
     } else {
-      ElMessage.warning(res.data.message)
+      ElMessage.warning('操作未完成')
     }
   } catch (error) {
     console.error('Regenerate failed:', error)

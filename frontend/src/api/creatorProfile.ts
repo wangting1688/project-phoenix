@@ -58,21 +58,21 @@ export interface AccountDiagnosis {
 }
 
 export function getCreatorProfile() {
-  return request.get<{ success: boolean; data: { profile: CreatorProfileData; preference: CreatorPreference | null } }>('/creator-profile')
+  return request.get<unknown, { profile: CreatorProfileData; preference: CreatorPreference | null }>('/creator-profile')
 }
 
 export function updateCreatorProfile(data: Partial<CreatorProfileData>) {
-  return request.put<{ success: boolean; data: CreatorProfileData }>('/creator-profile', data)
+  return request.put<unknown, CreatorProfileData>('/creator-profile', data)
 }
 
 export function getCreatorPreference() {
-  return request.get<{ success: boolean; data: CreatorPreference | null }>('/creator-profile/preference')
+  return request.get<unknown, CreatorPreference | null>('/creator-profile/preference')
 }
 
 export function updateCreatorPreference(data: Partial<CreatorPreference>) {
-  return request.put<{ success: boolean; data: CreatorPreference }>('/creator-profile/preference', data)
+  return request.put<unknown, CreatorPreference>('/creator-profile/preference', data)
 }
 
 export function diagnoseAccount() {
-  return request.post<{ success: boolean; data: AccountDiagnosis }>('/creator-profile/diagnose')
+  return request.post<unknown, AccountDiagnosis>('/creator-profile/diagnose')
 }

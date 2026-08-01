@@ -92,10 +92,7 @@ export interface QuickCheckResult {
 }
 
 export function reviewContent(contentType: string, contentId: number, contentText: string) {
-  return request.post<{
-    success: boolean
-    data: ReviewResult
-  }>('/quality/review', {
+  return request.post<unknown, ReviewResult>('/quality/review', {
     content_type: contentType,
     content_id: contentId,
     content_text: contentText,
@@ -103,24 +100,15 @@ export function reviewContent(contentType: string, contentId: number, contentTex
 }
 
 export function getReviewResult(reviewId: number) {
-  return request.get<{
-    success: boolean
-    data: ReviewResult
-  }>(`/quality/review/${reviewId}`)
+  return request.get<unknown, ReviewResult>(`/quality/review/${reviewId}`)
 }
 
 export function getContentReview(contentType: string, contentId: number) {
-  return request.get<{
-    success: boolean
-    data: ReviewResult
-  }>(`/quality/content/${contentType}/${contentId}`)
+  return request.get<unknown, ReviewResult>(`/quality/content/${contentType}/${contentId}`)
 }
 
 export function optimizeContent(contentType: string, contentId: number, contentText: string) {
-  return request.post<{
-    success: boolean
-    data: OptimizeResult
-  }>('/quality/optimize', {
+  return request.post<unknown, OptimizeResult>('/quality/optimize', {
     content_type: contentType,
     content_id: contentId,
     content_text: contentText,
@@ -128,10 +116,7 @@ export function optimizeContent(contentType: string, contentId: number, contentT
 }
 
 export function quickCheck(contentType: string, contentId: number, contentText: string) {
-  return request.post<{
-    success: boolean
-    data: QuickCheckResult
-  }>('/quality/quick-check', {
+  return request.post<unknown, QuickCheckResult>('/quality/quick-check', {
     content_type: contentType,
     content_id: contentId,
     content_text: contentText,

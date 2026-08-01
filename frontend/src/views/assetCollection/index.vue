@@ -307,14 +307,14 @@ const loadData = async () => {
       getAssetLibraryStats(),
     ])
 
-    if (dailyRes.data.success) {
-      dailyRec.value = dailyRes.data.data
+    if (dailyRes) {
+      dailyRec.value = dailyRes
     }
-    if (tasksRes.data.success) {
-      tasks.value = tasksRes.data.data
+    if (tasksRes) {
+      tasks.value = tasksRes
     }
-    if (statsRes.data.success) {
-      stats.value = statsRes.data.data
+    if (statsRes) {
+      stats.value = statsRes
     }
   } catch (error) {
     console.error('Load data failed:', error)

@@ -58,10 +58,7 @@ export interface AssetLibraryStats {
 }
 
 export function getDailyRecommendation() {
-  return request.get<{
-    success: boolean
-    data: DailyRecommendation
-  }>('/asset-collection/daily')
+  return request.get<unknown, DailyRecommendation>('/asset-collection/daily')
 }
 
 export function createCollectionTask(data: {
@@ -76,59 +73,44 @@ export function createCollectionTask(data: {
   emotion?: string
   estimated_time?: number
 }) {
-  return request.post<{
-    success: boolean
-    data: {
-      task_id: number
-      title: string
-      priority: string
-      status: string
-    }
-  }>('/asset-collection/tasks', data)
+  return request.post<unknown, {
+  task_id: number
+  title: string
+  priority: string
+  status: string
+}>('/asset-collection/tasks', data)
 }
 
 export function getCollectionTasks(status?: string, priority?: string) {
-  return request.get<{
-    success: boolean
-    data: CollectionTask[]
-  }>('/asset-collection/tasks', {
+  return request.get<unknown, CollectionTask[]>('/asset-collection/tasks', {
     params: { status, priority },
   })
 }
 
 export function updateTaskStatus(taskId: number, status: string, uploadedAssetId?: number) {
-  return request.post<{
-    success: boolean
-    data: {
-      task_id: number
-      status: string
-      progress: number
-    }
-  }>(`/asset-collection/tasks/${taskId}/status`, {
+  return request.post<unknown, {
+  task_id: number
+  status: string
+  progress: number
+}>(`/asset-collection/tasks/${taskId}/status`, {
     status,
     uploaded_asset_id: uploadedAssetId,
   })
 }
 
 export function getAssetLibraryStats() {
-  return request.get<{
-    success: boolean
-    data: AssetLibraryStats
-  }>('/asset-collection/stats')
+  return request.get<unknown, AssetLibraryStats>('/asset-collection/stats')
 }
 
 export function getAssetCategories(type: string = 'creator') {
-  return request.get<{
-    success: boolean
-    data: Array<{
-      id: number
-      name: string
-      description: string | null
-      shooting_tips: string[] | null
-      recommended_duration: number
-      is_required: number
-    }>
-  }>('/asset-collection/categories', {
+  return request.get<unknown, Array<{
+  id: number
+  name: string
+  description: string | null
+  shooting_tips: string[] | null
+  recommended_duration: number
+  is_required: number
+}>>('/asset-collection/categories', {
     params: { type },
   })
 }

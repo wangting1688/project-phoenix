@@ -66,34 +66,22 @@ export interface AnalysisSession {
 }
 
 export function createAnalysis(video_url: string) {
-  return request.post<{
-    success: boolean
-    data: {
-      session_id: number
-      video_url: string
-      platform: string
-      status: string
-    }
-  }>('/viral-analysis/create', { video_url })
+  return request.post<unknown, {
+  session_id: number
+  video_url: string
+  platform: string
+  status: string
+}>('/viral-analysis/create', { video_url })
 }
 
 export function analyzeVideo(session_id: number) {
-  return request.post<{
-    success: boolean
-    data: AnalysisResult
-  }>(`/viral-analysis/${session_id}/analyze`)
+  return request.post<unknown, AnalysisResult>(`/viral-analysis/${session_id}/analyze`)
 }
 
 export function getAnalysisResult(session_id: number) {
-  return request.get<{
-    success: boolean
-    data: AnalysisSession
-  }>(`/viral-analysis/${session_id}`)
+  return request.get<unknown, AnalysisSession>(`/viral-analysis/${session_id}`)
 }
 
 export function generateOpportunity(session_id: number) {
-  return request.post<{
-    success: boolean
-    data: OpportunityResult
-  }>(`/viral-analysis/${session_id}/generate`)
+  return request.post<unknown, OpportunityResult>(`/viral-analysis/${session_id}/generate`)
 }

@@ -9,6 +9,13 @@
       <p>AI 正在为你生成推荐...</p>
     </div>
 
+    <div v-else-if="isAllEmpty" class="hub-empty">
+      <div class="empty-icon">📭</div>
+      <h3>还没有内容推荐</h3>
+      <p>推荐来自「AI爆款逆向工程」的分析结果。<br />先去分析几个同行爆款视频，这里就会出现选题建议。</p>
+      <button class="empty-btn" @click="router.push('/viral-analysis')">去分析爆款视频</button>
+    </div>
+
     <div v-else class="categories">
       <div v-for="(category, key) in recommendations" :key="key" class="category-section">
         <div class="category-header">
@@ -17,7 +24,9 @@
           <button class="refresh-btn" @click="handleRefresh(key as string)">换一批</button>
         </div>
 
-        <div class="opportunities-list">
+        <div v-if="!category.items?.length" class="category-empty">暂无内容</div>
+
+        <div v-else class="opportunities-list">
           <div 
             v-for="item in category.items" 
             :key="item.id" 
@@ -94,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { getTodayRecommendations, refreshRecommendations, type ContentOpportunity, type OpportunityDetail, type CategoryData } from '@/api/contentHub'
 
@@ -103,15 +112,19 @@ const loading = ref(true)
 const recommendations = ref<Record<string, CategoryData>>({})
 const selectedOpportunity = ref<OpportunityDetail | null>(null)
 
+const isAllEmpty = computed(() => {
+  const cats = Object.values(recommendations.value)
+  return cats.length === 0 || cats.every((c) => !c.items?.length)
+})
+
 const loadRecommendations = async () => {
   loading.value = true
   try {
-    const res = await getTodayRecommendations()
-    if (res.data.success) {
-      recommendations.value = res.data.data
-    }
+    // 拦截器已解包, 此处直接拿到业务数据
+    recommendations.value = (await getTodayRecommendations()) || {}
   } catch (error) {
     console.error('Failed to load recommendations:', error)
+    recommendations.value = {}
   } finally {
     loading.value = false
   }
@@ -119,9 +132,9 @@ const loadRecommendations = async () => {
 
 const handleRefresh = async (category: string) => {
   try {
-    const res = await refreshRecommendations(category)
-    if (res.data.success && recommendations.value[category]) {
-      recommendations.value[category].items = res.data.data
+    const items = await refreshRecommendations(category)
+    if (recommendations.value[category]) {
+      recommendations.value[category].items = items || []
     }
   } catch (error) {
     console.error('Failed to refresh:', error)
@@ -161,6 +174,15 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.hub-empty { text-align: center; padding: 60px 24px; }
+.hub-empty .empty-icon { font-size: 48px; margin-bottom: 12px; }
+.hub-empty h3 { font-size: 17px; color: #303133; margin: 0 0 10px; }
+.hub-empty p { font-size: 14px; color: #909399; line-height: 1.7; margin: 0 0 20px; }
+.empty-btn {
+  padding: 10px 22px; border: none; border-radius: 20px; cursor: pointer;
+  background: linear-gradient(135deg, #667eea, #764ba2); color: #fff; font-size: 14px;
+}
+.category-empty { padding: 20px; text-align: center; color: #c0c4cc; font-size: 13px; }
 .content-hub {
   padding: 24px;
   max-width: 1200px;

@@ -94,72 +94,46 @@ export interface IntelligenceStats {
 }
 
 export function analyzeAsset(assetId: number) {
-  return request.post<{
-    success: boolean
-    data: {
-      asset_id: number
-      status: string
-      overall_score: number
-      analysis_result: any
-    }
-  }>(`/asset-intelligence/analyze/${assetId}`)
+  return request.post<unknown, {
+  asset_id: number
+  status: string
+  overall_score: number
+  analysis_result: any
+}>(`/asset-intelligence/analyze/${assetId}`)
 }
 
 export function batchAnalyze(assetIds?: number[]) {
-  return request.post<{
-    success: boolean
-    data: {
-      total: number
-      completed: number
-      failed: number
-      details: any[]
-    }
-  }>('/asset-intelligence/analyze/batch', { asset_ids: assetIds })
+  return request.post<unknown, {
+  total: number
+  completed: number
+  failed: number
+  details: any[]
+}>('/asset-intelligence/analyze/batch', { asset_ids: assetIds })
 }
 
 export function getAnalysisResult(assetId: number) {
-  return request.get<{
-    success: boolean
-    data: AssetIntelligence
-  }>(`/asset-intelligence/result/${assetId}`)
+  return request.get<unknown, AssetIntelligence>(`/asset-intelligence/result/${assetId}`)
 }
 
 export function searchAssets(params: AssetSearchParams) {
-  return request.post<{
-    success: boolean
-    data: SearchResult[]
-    total: number
-  }>('/asset-intelligence/search', params)
+  return request.post<unknown, SearchResult[]>('/asset-intelligence/search', params)
 }
 
 export function smartRecommend(scriptContent: string, shotType?: string) {
-  return request.post<{
-    success: boolean
-    data: SmartRecommendResult[]
-    total: number
-  }>('/asset-intelligence/smart-recommend', {
+  return request.post<unknown, SmartRecommendResult[]>('/asset-intelligence/smart-recommend', {
     script_content: scriptContent,
     shot_type: shotType,
   })
 }
 
 export function findBestSegments(requirements: any[]) {
-  return request.post<{
-    success: boolean
-    data: any[]
-  }>('/asset-intelligence/find-segments', { requirements })
+  return request.post<unknown, any[]>('/asset-intelligence/find-segments', { requirements })
 }
 
 export function getAssetScore(assetId: number) {
-  return request.get<{
-    success: boolean
-    data: ScoreBreakdown
-  }>(`/asset-intelligence/score/${assetId}`)
+  return request.get<unknown, ScoreBreakdown>(`/asset-intelligence/score/${assetId}`)
 }
 
 export function getIntelligenceStats() {
-  return request.get<{
-    success: boolean
-    data: IntelligenceStats
-  }>('/asset-intelligence/stats')
+  return request.get<unknown, IntelligenceStats>('/asset-intelligence/stats')
 }

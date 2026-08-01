@@ -203,13 +203,13 @@ const loadProfile = async () => {
   loading.value = true
   try {
     const res = await getCreatorProfile()
-    if (res.data.success) {
-      if (res.data.data.preference?.score_weights) {
+    if (res) {
+      if (res.preference?.score_weights) {
         weights.value = {
-          trend: res.data.data.preference.score_weights.trend_weight || 30,
-          consult: res.data.data.preference.score_weights.consult_weight || 35,
-          creator: res.data.data.preference.score_weights.creator_weight || 25,
-          original: res.data.data.preference.score_weights.original_weight || 10,
+          trend: res.preference.score_weights.trend_weight || 30,
+          consult: res.preference.score_weights.consult_weight || 35,
+          creator: res.preference.score_weights.creator_weight || 25,
+          original: res.preference.score_weights.original_weight || 10,
         }
       }
     }
@@ -224,9 +224,9 @@ const runDiagnosis = async () => {
   loading.value = true
   try {
     const res = await diagnoseAccount()
-    if (res.data.success) {
-      diagnosis.value = res.data.data
-      accountType.value = res.data.data.account_type
+    if (res) {
+      diagnosis.value = res
+      accountType.value = res.account_type
       ElMessage.success('账号诊断完成！')
     }
   } catch (error) {

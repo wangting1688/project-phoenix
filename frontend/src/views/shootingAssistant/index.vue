@@ -336,8 +336,8 @@ const formatTime = (seconds: number) => {
 const loadProfile = async () => {
   try {
     const res = await getShootingProfile()
-    if (res.data.success) {
-      profile.value = res.data.data
+    if (res) {
+      profile.value = res
     }
   } catch (error) {
     console.error('Load profile failed:', error)
@@ -347,7 +347,7 @@ const loadProfile = async () => {
 const saveProfile = async () => {
   try {
     const res = await updateShootingProfile(profile.value)
-    if (res.data.success) {
+    if (res) {
       ElMessage.success('更新成功')
       showProfileEdit.value = false
     }
@@ -366,8 +366,8 @@ const generatePlan = async () => {
   generating.value = true
   try {
     const res = await generateShootingPlan(1, scriptContent.value)
-    if (res.data.success) {
-      plan.value = res.data.data
+    if (res) {
+      plan.value = res
       ElMessage.success('拍摄方案已生成')
     }
   } catch (error) {
@@ -383,8 +383,8 @@ const matchAssets = async () => {
 
   try {
     const res = await matchAssetsForPlan(1)
-    if (res.data.success) {
-      assetMatch.value = res.data.data
+    if (res) {
+      assetMatch.value = res
     }
   } catch (error) {
     console.error('Match assets failed:', error)

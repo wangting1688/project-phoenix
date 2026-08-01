@@ -67,39 +67,24 @@ export interface ShootingModeInfo {
 }
 
 export function getShootingProfile() {
-  return request.get<{
-    success: boolean
-    data: ShootingProfile
-  }>('/shooting-assistant/profile')
+  return request.get<unknown, ShootingProfile>('/shooting-assistant/profile')
 }
 
 export function updateShootingProfile(data: ShootingProfile) {
-  return request.post<{
-    success: boolean
-    data: ShootingProfile
-  }>('/shooting-assistant/profile', data)
+  return request.post<unknown, ShootingProfile>('/shooting-assistant/profile', data)
 }
 
 export function generateShootingPlan(projectId: number, scriptContent: string) {
-  return request.post<{
-    success: boolean
-    data: ShootingPlan
-  }>('/shooting-assistant/plan', {
+  return request.post<unknown, ShootingPlan>('/shooting-assistant/plan', {
     project_id: projectId,
     script_content: scriptContent,
   })
 }
 
 export function matchAssetsForPlan(projectId: number) {
-  return request.post<{
-    success: boolean
-    data: MatchResult
-  }>(`/shooting-assistant/plan/${projectId}/assets`)
+  return request.post<unknown, MatchResult>(`/shooting-assistant/plan/${projectId}/assets`)
 }
 
 export function getShootingModes() {
-  return request.get<{
-    success: boolean
-    data: Record<string, ShootingModeInfo>
-  }>('/shooting-assistant/modes')
+  return request.get<unknown, Record<string, ShootingModeInfo>>('/shooting-assistant/modes')
 }

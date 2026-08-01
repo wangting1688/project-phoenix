@@ -28,21 +28,17 @@ export interface CategoryData {
 }
 
 export function getTodayRecommendations() {
-  return request.get<{ success: boolean; data: Record<string, CategoryData> }>('/content-hub/today')
+  return request.get<unknown, Record<string, CategoryData>>('/content-hub/today')
 }
 
 export function getRecommendations(category: string, count: number = 5) {
-  return request.get<{ success: boolean; data: ContentOpportunity[] }>('/content-hub/recommendations', {
+  return request.get<unknown, ContentOpportunity[]>('/content-hub/recommendations', {
     params: { category, count }
   })
 }
 
-export function getOpportunityDetail(id: number) {
-  return request.get<{ success: boolean; data: OpportunityDetail }>(`/content-hub/opportunities/${id}`)
-}
-
 export function refreshRecommendations(category: string) {
-  return request.post<{ success: boolean; data: ContentOpportunity[] }>('/content-hub/refresh', {
+  return request.post<unknown, ContentOpportunity[]>('/content-hub/refresh', {
     category
   })
 }

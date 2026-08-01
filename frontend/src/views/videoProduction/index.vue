@@ -325,8 +325,8 @@ const selectJob = (job: ProductionJob) => {
 const loadStats = async () => {
   try {
     const res = await getProductionStats()
-    if (res.data.success) {
-      stats.value = res.data.data
+    if (res) {
+      stats.value = res
     }
   } catch (e) {
     console.error('Load stats failed:', e)
@@ -336,8 +336,8 @@ const loadStats = async () => {
 const loadJobs = async () => {
   try {
     const res = await getProductionJobs(undefined, 1, 20)
-    if (res.data.success) {
-      jobs.value = res.data.data.jobs
+    if (res) {
+      jobs.value = res.jobs
     }
   } catch (e) {
     console.error('Load jobs failed:', e)
@@ -347,8 +347,8 @@ const loadJobs = async () => {
 const loadTimeline = async (jobId: number) => {
   try {
     const res = await getJobTimeline(jobId)
-    if (res.data.success) {
-      timelineItems.value = res.data.data
+    if (res) {
+      timelineItems.value = res
     }
   } catch (e) {
     console.error('Load timeline failed:', e)
@@ -358,8 +358,8 @@ const loadTimeline = async (jobId: number) => {
 const loadVariants = async (jobId: number) => {
   try {
     const res = await getJobVariants(jobId)
-    if (res.data.success) {
-      variants.value = res.data.data
+    if (res) {
+      variants.value = res
     }
   } catch (e) {
     console.error('Load variants failed:', e)
@@ -369,8 +369,8 @@ const loadVariants = async (jobId: number) => {
 const loadBlockTasks = async () => {
   try {
     const res = await getBlockTasks('pending')
-    if (res.data.success) {
-      blockTasks.value = res.data.data
+    if (res) {
+      blockTasks.value = res
     }
   } catch (e) {
     console.error('Load block tasks failed:', e)
@@ -384,7 +384,7 @@ const handleCreateJob = async () => {
       source_plan_id: createForm.value.source_plan_id,
       target_platforms: createForm.value.target_platforms.length ? createForm.value.target_platforms : undefined,
     })
-    if (res.data.success) {
+    if (res) {
       showCreateModal.value = false
       createForm.value = { title: '', source_plan_id: undefined, target_platforms: [] }
       await loadJobs()
@@ -399,7 +399,7 @@ const handleGenerateTimeline = async () => {
   if (!selectedJob.value) return
   try {
     const res = await generateTimeline(selectedJob.value.id)
-    if (res.data.success) {
+    if (res) {
       await loadTimeline(selectedJob.value.id)
       await loadJobs()
     }
@@ -412,7 +412,7 @@ const handleGenerateVariants = async () => {
   if (!selectedJob.value) return
   try {
     const res = await generateVariants(selectedJob.value.id, selectedJob.value.target_platforms)
-    if (res.data.success) {
+    if (res) {
       await loadVariants(selectedJob.value.id)
       await loadJobs()
     }
@@ -424,7 +424,7 @@ const handleGenerateVariants = async () => {
 const handleResolveBlock = async (taskId: number) => {
   try {
     const res = await resolveBlockTask(taskId)
-    if (res.data.success) {
+    if (res) {
       await loadBlockTasks()
     }
   } catch (e) {

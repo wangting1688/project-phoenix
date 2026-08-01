@@ -93,70 +93,44 @@ export {
 }
 
 export function getLearningStats() {
-  return request.get<{
-    success: boolean
-    data: DirectorLearningStats
-  }>('/director-learning/stats')
+  return request.get<unknown, DirectorLearningStats>('/director-learning/stats')
 }
 
 export function getLearningMemories(memory_type?: string, min_confidence?: number, limit?: number) {
-  return request.get<{
-    success: boolean
-    data: LearningMemory[]
-  }>('/director-learning/memories', { params: { memory_type, min_confidence, limit } })
+  return request.get<unknown, LearningMemory[]>('/director-learning/memories', { params: { memory_type, min_confidence, limit } })
 }
 
 export function getCreatorStrategy() {
-  return request.get<{
-    success: boolean
-    data: CreatorStrategyProfile | null
-    message?: string
-  }>('/director-learning/creator-strategy')
+  return request.get<unknown, CreatorStrategyProfile | null>('/director-learning/creator-strategy')
 }
 
 export function getPlatformStrategies() {
-  return request.get<{
-    success: boolean
-    data: PlatformStrategyProfile[]
-  }>('/director-learning/platform-strategies')
+  return request.get<unknown, PlatformStrategyProfile[]>('/director-learning/platform-strategies')
 }
 
 export function getVideoPlatformScores(videoId: number) {
-  return request.get<{
-    success: boolean
-    data: PlatformScore[]
-  }>(`/director-learning/videos/${videoId}/platform-scores`)
+  return request.get<unknown, PlatformScore[]>(`/director-learning/videos/${videoId}/platform-scores`)
 }
 
 export function runDirectorReview(videoId: number) {
-  return request.post<{
-    success: boolean
-    message: string
-    data: Record<string, any>
-  }>(`/director-learning/videos/${videoId}/review`)
+  return request.post<unknown, Record<string, any>>(`/director-learning/videos/${videoId}/review`)
 }
 
 export function calculateDirectorScore(planId: number, targetPlatform: string = 'wechat_video') {
-  return request.post<{
-    success: boolean
-    data: {
-      plan_id: number
-      target_platform: string
-      director_score: number
-      score_breakdown: Record<string, { score: number; max: number; reason: string }>
-      score_reasons: string[]
-    }
-  }>('/director-learning/calculate-score', null, { params: { plan_id: planId, target_platform: targetPlatform } })
+  return request.post<unknown, {
+  plan_id: number
+  target_platform: string
+  director_score: number
+  score_breakdown: Record<string, { score: number; max: number; reason: string }>
+  score_reasons: string[]
+}>('/director-learning/calculate-score', null, { params: { plan_id: planId, target_platform: targetPlatform } })
 }
 
 export function getPhoenixCommercialWeights() {
-  return request.get<{
-    success: boolean
-    data: {
-      description: string
-      weights: Record<string, { name: string; weight: string }>
-      philosophy: string
-      core_platforms: Record<string, string>
-    }
-  }>('/director-learning/weights/phoenix-commercial')
+  return request.get<unknown, {
+  description: string
+  weights: Record<string, { name: string; weight: string }>
+  philosophy: string
+  core_platforms: Record<string, string>
+}>('/director-learning/weights/phoenix-commercial')
 }

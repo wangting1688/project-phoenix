@@ -36,14 +36,11 @@ export interface CreationResult {
 }
 
 export function getTemplates() {
-  return request.get<{
-    success: boolean
-    data: {
-      styles: Record<string, StyleTemplate>
-      tones: Record<string, string>
-      durations: Record<number, string>
-    }
-  }>('/creation-studio/templates')
+  return request.get<unknown, {
+  styles: Record<string, StyleTemplate>
+  tones: Record<string, string>
+  durations: Record<number, string>
+}>('/creation-studio/templates')
 }
 
 export function createSession(data: {
@@ -51,14 +48,11 @@ export function createSession(data: {
   opportunity_id?: number
   topic?: string
 }) {
-  return request.post<{
-    success: boolean
-    data: {
-      session_id: number
-      status: string
-      current_step: string
-    }
-  }>('/creation-studio/sessions', data)
+  return request.post<unknown, {
+  session_id: number
+  status: string
+  current_step: string
+}>('/creation-studio/sessions', data)
 }
 
 export function configureSession(data: {
@@ -67,34 +61,25 @@ export function configureSession(data: {
   duration: number
   tone: string
 }) {
-  return request.post<{
-    success: boolean
-    data: {
-      session_id: number
-      config: CreationConfig
-      current_step: string
-    }
-  }>('/creation-studio/configure', data)
+  return request.post<unknown, {
+  session_id: number
+  config: CreationConfig
+  current_step: string
+}>('/creation-studio/configure', data)
 }
 
 export function generateContent(session_id: number) {
-  return request.post<{
-    success: boolean
-    data: CreationResult
-  }>('/creation-studio/generate', { session_id })
+  return request.post<unknown, CreationResult>('/creation-studio/generate', { session_id })
 }
 
 export function getSession(session_id: number) {
-  return request.get<{
-    success: boolean
-    data: {
-      session_id: number
-      status: string
-      current_step: string
-      config: CreationConfig
-      result: CreationResult | null
-      created_at: string
-      updated_at: string
-    }
-  }>(`/creation-studio/sessions/${session_id}`)
+  return request.get<unknown, {
+  session_id: number
+  status: string
+  current_step: string
+  config: CreationConfig
+  result: CreationResult | null
+  created_at: string
+  updated_at: string
+}>(`/creation-studio/sessions/${session_id}`)
 }

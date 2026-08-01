@@ -354,7 +354,7 @@ async function handleTest(p: VoiceProfile) {
   testingId.value = p.id
   try {
     const res = await testVoiceProfile(p.id, '你好，这是我的声音，很高兴认识你。')
-    demoUrls[p.id] = `${res.data.audio_url}?t=${Date.now()}`
+    demoUrls[p.id] = `${res.audio_url}?t=${Date.now()}`
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '试听失败')
   } finally {

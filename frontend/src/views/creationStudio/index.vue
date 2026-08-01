@@ -233,12 +233,12 @@ const isStepDone = (stepName: string) => {
 const loadTemplates = async () => {
   try {
     const res = await getTemplates()
-    if (res.data.success) {
-      templates.value = res.data.data
+    if (res) {
+      templates.value = res
       // Set defaults
-      const styleKeys = Object.keys(res.data.data.styles)
+      const styleKeys = Object.keys(res.styles)
       if (styleKeys.length) selectedStyle.value = styleKeys[0]
-      const toneKeys = Object.keys(res.data.data.tones)
+      const toneKeys = Object.keys(res.tones)
       if (toneKeys.length) selectedTone.value = toneKeys[0]
     }
   } catch (error) {
@@ -259,11 +259,11 @@ const startGeneration = async () => {
       topic: opportunity.value?.title,
     })
 
-    if (!createRes.data.success) {
+    if (!createRes) {
       throw new Error('创建会话失败')
     }
 
-    sessionId.value = createRes.data.data.session_id
+    sessionId.value = createRes.session_id
 
     // 2. Configure
     await configureSession({
@@ -283,8 +283,8 @@ const startGeneration = async () => {
 
     // 3. Generate
     const genRes = await generateContent(sessionId.value)
-    if (genRes.data.success) {
-      result.value = genRes.data.data
+    if (genRes) {
+      result.value = genRes
       step.value = 'result'
 
       // 4. AI质量审核（新增）
@@ -295,8 +295,8 @@ const startGeneration = async () => {
             sessionId.value,
             result.value.script
           )
-          if (reviewRes.data.success) {
-            qualityReview.value = reviewRes.data.data
+          if (reviewRes) {
+            qualityReview.value = reviewRes
           }
         } catch (error) {
           console.error('Quality review failed:', error)

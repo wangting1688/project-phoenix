@@ -36,7 +36,7 @@ export function trainVoiceProfile(id: number) {
 }
 
 export function testVoiceProfile(id: number, text?: string) {
-  return request.post(`/voice-profiles/${id}/test`, null, {
+  return request.post<unknown, { audio_url: string; duration_hint: number }>(`/voice-profiles/${id}/test`, null, {
     params: text ? { text } : undefined,
   })
 }

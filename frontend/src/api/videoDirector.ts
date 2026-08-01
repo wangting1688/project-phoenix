@@ -130,62 +130,39 @@ export function generatePlan(data: {
   target_duration?: number
   strategy?: string
 }) {
-  return request.post<{
-    success: boolean
-    message: string
-    data: VideoEditPlan
-  }>('/video-director/generate-plan', data)
+  return request.post<unknown, VideoEditPlan>('/video-director/generate-plan', data)
 }
 
 export function getPlans(status?: string) {
-  return request.get<{
-    success: boolean
-    data: VideoEditPlan[]
-  }>('/video-director/plans', { params: { status } })
+  return request.get<unknown, VideoEditPlan[]>('/video-director/plans', { params: { status } })
 }
 
 export function getPlanDetail(planId: number) {
-  return request.get<{
-    success: boolean
-    data: VideoEditPlan
-  }>(`/video-director/plans/${planId}`)
+  return request.get<unknown, VideoEditPlan>(`/video-director/plans/${planId}`)
 }
 
 export function updatePlanStatus(planId: number, status: string) {
-  return request.put<{
-    success: boolean
-    data: { plan_id: number; status: string }
-  }>(`/video-director/plans/${planId}/status`, { status })
+  return request.put<unknown, { plan_id: number; status: string }>(`/video-director/plans/${planId}/status`, { status })
 }
 
 export function getShootingSuggestions(planId: number) {
-  return request.get<{
-    success: boolean
-    data: {
-      plan_id: number
-      title: string
-      match_status: string
-      total_shots: number
-      matched_shots: number
-      missing_shots: number
-      shooting_suggestions: ShootingSuggestion[]
-    }
-  }>(`/video-director/plans/${planId}/shooting-suggestions`)
+  return request.get<unknown, {
+  plan_id: number
+  title: string
+  match_status: string
+  total_shots: number
+  matched_shots: number
+  missing_shots: number
+  shooting_suggestions: ShootingSuggestion[]
+}>(`/video-director/plans/${planId}/shooting-suggestions`)
 }
 
 export function updateCommercialScores() {
-  return request.post<{
-    success: boolean
-    message: string
-    data: { updated_count: number }
-  }>('/video-director/update-commercial-scores')
+  return request.post<unknown, { updated_count: number }>('/video-director/update-commercial-scores')
 }
 
 export function getDirectorStats() {
-  return request.get<{
-    success: boolean
-    data: DirectorStats
-  }>('/video-director/stats')
+  return request.get<unknown, DirectorStats>('/video-director/stats')
 }
 
 export interface ScriptTemplate {
@@ -229,33 +206,19 @@ export interface ShootingTaskStatus {
 }
 
 export function getTemplates(template_type?: string, industry?: string) {
-  return request.get<{
-    success: boolean
-    data: ScriptTemplate[]
-  }>('/video-director/templates', { params: { template_type, industry } })
+  return request.get<unknown, ScriptTemplate[]>('/video-director/templates', { params: { template_type, industry } })
 }
 
 export function matchTemplate(script_content: string, target_duration?: number) {
-  return request.post<{
-    success: boolean
-    data: ScriptTemplate | null
-    message?: string
-  }>('/video-director/match-template', null, { params: { script_content, target_duration } })
+  return request.post<unknown, ScriptTemplate | null>('/video-director/match-template', null, { params: { script_content, target_duration } })
 }
 
 export function getShootingTasksStatus(planId: number) {
-  return request.get<{
-    success: boolean
-    data: ShootingTaskStatus
-  }>(`/video-director/plans/${planId}/shooting-tasks`)
+  return request.get<unknown, ShootingTaskStatus>(`/video-director/plans/${planId}/shooting-tasks`)
 }
 
 export function regeneratePlan(planId: number) {
-  return request.post<{
-    success: boolean
-    message: string
-    data: VideoEditPlan | ShootingTaskStatus
-  }>(`/video-director/plans/${planId}/regenerate`)
+  return request.post<unknown, VideoEditPlan | ShootingTaskStatus>(`/video-director/plans/${planId}/regenerate`)
 }
 
 export const TEMPLATE_TYPE_LABELS: Record<string, string> = {

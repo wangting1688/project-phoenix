@@ -24,12 +24,25 @@ request.interceptors.request.use(
 request.interceptors.response.use(
   (response) => {
     const res = response.data
-    if (res.code === 200) {
-      return res.data
-    } else {
+    // 后端存在两种响应格式, 统一在此解包为业务数据:
+    //   1) ApiResponse: { code, message, data }
+    //   2) 部分模块:    { success, data, message? }
+    if (res && typeof res === 'object' && 'code' in res) {
+      if (res.code === 200) {
+        return res.data
+      }
       ElMessage.error(res.message || '请求失败')
       return Promise.reject(new Error(res.message || '请求失败'))
     }
+    if (res && typeof res === 'object' && 'success' in res) {
+      if (res.success) {
+        return res.data
+      }
+      ElMessage.error(res.message || res.detail || '请求失败')
+      return Promise.reject(new Error(res.message || res.detail || '请求失败'))
+    }
+    // 无包装结构 (如直接返回数组/字符串) 原样透传
+    return res
   },
   (error) => {
     if (error.response?.status === 401) {

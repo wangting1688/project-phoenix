@@ -73,89 +73,61 @@ export const ROLE_COLORS: Record<string, string> = {
 }
 
 export function createSegments(assetId: number) {
-  return request.post<{
-    success: boolean
-    message: string
-    data: {
-      asset_id: number
-      segments_count: number
-      segments: Array<{
-        id: number
-        segment_number: number
-        segment_role: string
-        emotion: string
-        duration: number
-        quality_score: number
-      }>
-    }
-  }>('/asset-segments', { asset_id: assetId })
+  return request.post<unknown, {
+  asset_id: number
+  segments_count: number
+  segments: Array<{
+    id: number
+    segment_number: number
+    segment_role: string
+    emotion: string
+    duration: number
+    quality_score: number
+  }>
+}>('/asset-segments', { asset_id: assetId })
 }
 
 export function getSegmentsByAsset(assetId: number) {
-  return request.get<{
-    success: boolean
-    data: {
-      asset_id: number
-      segments: AssetSegmentItem[]
-    }
-  }>(`/asset-segments/${assetId}`)
+  return request.get<unknown, {
+  asset_id: number
+  segments: AssetSegmentItem[]
+}>(`/asset-segments/${assetId}`)
 }
 
 export function getSegmentDetail(assetId: number, segmentId: number) {
-  return request.get<{
-    success: boolean
-    data: AssetSegmentItem
-  }>(`/asset-segments/${assetId}/${segmentId}`)
+  return request.get<unknown, AssetSegmentItem>(`/asset-segments/${assetId}/${segmentId}`)
 }
 
 export function searchSegments(params: SegmentSearchParams) {
-  return request.post<{
-    success: boolean
-    data: {
-      total: number
-      segments: AssetSegmentItem[]
-    }
-  }>('/asset-segments/search', params)
+  return request.post<unknown, {
+  total: number
+  segments: AssetSegmentItem[]
+}>('/asset-segments/search', params)
 }
 
 export function getCreatorProfile(userId: number) {
-  return request.get<{
-    success: boolean
-    data: CreatorPerformanceProfile | null
-    message?: string
-  }>(`/asset-segments/profile/${userId}`)
+  return request.get<unknown, CreatorPerformanceProfile | null>(`/asset-segments/profile/${userId}`)
 }
 
 export function refreshCreatorProfile(userId: number) {
-  return request.post<{
-    success: boolean
-    message: string
-    data: {
-      user_id: number
-      best_emotion: string
-      best_scene: string
-      overall_performance_score: number
-      analyzed_segments: number
-    }
-  }>(`/asset-segments/profile/${userId}/refresh`)
+  return request.post<unknown, {
+  user_id: number
+  best_emotion: string
+  best_scene: string
+  overall_performance_score: number
+  analyzed_segments: number
+}>(`/asset-segments/profile/${userId}/refresh`)
 }
 
 export function getSegmentStats(userId: number) {
-  return request.get<{
-    success: boolean
-    data: SegmentStats
-  }>(`/asset-segments/stats/${userId}`)
+  return request.get<unknown, SegmentStats>(`/asset-segments/stats/${userId}`)
 }
 
 export function batchCreateSegments(assetIds: number[]) {
-  return request.post<{
-    success: boolean
-    message: string
-    data: Array<{
-      asset_id: number
-      success: boolean
-      segments_count?: number
-      error?: string
-    }>
-  }>('/asset-segments/batch-create', assetIds)
+  return request.post<unknown, Array<{
+  asset_id: number
+  success: boolean
+  segments_count?: number
+  error?: string
+}>>('/asset-segments/batch-create', assetIds)
 }

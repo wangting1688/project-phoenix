@@ -327,10 +327,10 @@ const startAnalysis = async () => {
     await new Promise(r => setTimeout(r, 500))
 
     const createRes = await createAnalysis(videoUrl.value.trim())
-    if (!createRes.data.success) {
+    if (!createRes) {
       throw new Error('创建分析任务失败')
     }
-    sessionId.value = createRes.data.data.session_id
+    sessionId.value = createRes.session_id
 
     // 2. 执行分析
     analyzingStep.value = 'AI正在分析视频内容...'
@@ -350,8 +350,8 @@ const startAnalysis = async () => {
     await new Promise(r => setTimeout(r, 500))
 
     const analyzeRes = await analyzeVideo(sessionId.value)
-    if (analyzeRes.data.success) {
-      analysisResult.value = analyzeRes.data.data
+    if (analyzeRes) {
+      analysisResult.value = analyzeRes
       progressPercent.value = 100
       step.value = 'result'
       ElMessage.success('分析完成！')
@@ -369,8 +369,8 @@ const generateOpportunity = async () => {
   generating.value = true
   try {
     const res = await apiGenerateOpportunity(sessionId.value)
-    if (res.data.success) {
-      opportunityResult.value = res.data.data
+    if (res) {
+      opportunityResult.value = res
       step.value = 'opportunity'
       ElMessage.success('原创方案已生成！')
     }

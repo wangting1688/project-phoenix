@@ -359,8 +359,8 @@ const getProgressColor = (score: number) => {
 const loadStats = async () => {
   try {
     const res = await getIntelligenceStats()
-    if (res.data.success) {
-      stats.value = res.data.data
+    if (res) {
+      stats.value = res
     }
   } catch (error) {
     console.error('Load stats failed:', error)
@@ -376,8 +376,8 @@ const handleSearch = async () => {
       min_score: filterMinScore.value,
       limit: 50,
     })
-    if (res.data.success) {
-      searchResults.value = res.data.data
+    if (res) {
+      searchResults.value = res
     }
   } catch (error) {
     console.error('Search failed:', error)
@@ -388,8 +388,8 @@ const batchAnalyzeAssets = async () => {
   try {
     ElMessage.info('开始批量分析素材...')
     const res = await batchAnalyze()
-    if (res.data.success) {
-      ElMessage.success(`分析完成：${res.data.data.completed} 成功，${res.data.data.failed} 失败`)
+    if (res) {
+      ElMessage.success(`分析完成：${res.completed} 成功，${res.failed} 失败`)
       loadStats()
       handleSearch()
     }
@@ -405,8 +405,8 @@ const showAssetDetail = async (result: SearchResult) => {
 
   try {
     const res = await getAssetScore(result.asset.id)
-    if (res.data.success) {
-      scoreBreakdown.value = res.data.data
+    if (res) {
+      scoreBreakdown.value = res
     }
   } catch (error) {
     console.error('Load score failed:', error)
@@ -414,8 +414,8 @@ const showAssetDetail = async (result: SearchResult) => {
 
   try {
     const res = await getSegmentsByAsset(result.asset.id)
-    if (res.data.success) {
-      assetSegments.value = res.data.data.segments
+    if (res) {
+      assetSegments.value = res.segments
     }
   } catch (error) {
     console.error('Load segments failed:', error)
@@ -428,12 +428,12 @@ const handleCreateSegments = async () => {
   creatingSegments.value = true
   try {
     const res = await createSegments(selectedAsset.value.asset.id)
-    if (res.data.success) {
-      ElMessage.success(res.data.message)
+    if (res) {
+      ElMessage.success('切片创建成功')
       try {
         const segRes = await getSegmentsByAsset(selectedAsset.value!.asset.id)
-        if (segRes.data.success) {
-          assetSegments.value = segRes.data.data.segments
+        if (segRes) {
+          assetSegments.value = segRes.segments
         }
       } catch (error) {
         console.error('Refresh segments failed:', error)
