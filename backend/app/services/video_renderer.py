@@ -154,30 +154,25 @@ def render_video(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # TTS 生成 (如需要)
-    # 优先: custom_speaker_id (火山克隆声纹) -> macOS say fallback
-    # 后续 C2 阶段: 火山接口真正接通, 用 cloned voice
+    # 优先级: 用户克隆声纹 -> 火山官方精品音色 -> macOS say
     has_audio = False
     if tts_audio_path and Path(tts_audio_path).exists():
         has_audio = True
     elif tts_text:
         try:
             tts_out = output_dir / f"tts_{project_id}_{int(time.time())}.mp3"
-            if custom_speaker_id:
-                # C2 阶段会调火山合成, C1 阶段 fallback 到 macOS say
-                from app.services.voice_clone import synthesize as vc_synthesize
-                from app.core.database import SessionLocal
-                _db = SessionLocal()
-                try:
-                    vc_synthesize(
-                        db=_db,
-                        custom_speaker_id=custom_speaker_id,
-                        text=tts_text,
-                        output_path=tts_out,
-                    )
-                finally:
-                    _db.close()
-            else:
-                generate_tts_mp3(tts_text, tts_out)
+            from app.services.voice_clone import synthesize as vc_synthesize
+            from app.core.database import SessionLocal
+            _db = SessionLocal()
+            try:
+                vc_synthesize(
+                    db=_db,
+                    custom_speaker_id=custom_speaker_id,
+                    text=tts_text,
+                    output_path=tts_out,
+                )
+            finally:
+                _db.close()
             tts_audio_path = tts_out
             has_audio = True
         except NotImplementedError as e:

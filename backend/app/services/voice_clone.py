@@ -141,13 +141,24 @@ def _call_volc_train(profile: UserVoiceProfile, sample_bytes: bytes, sample_form
 # ===== TTS 合成接口 =====
 def _call_volc_synthesize(custom_speaker_id: str, text: str, lang: int = 0) -> Optional[bytes]:
     """
-    调火山方舟 TTS 合成 (声音复刻 2.0 走 WebSocket 双向流式)
-    失败/未配置 返回 None (让上层走 fallback)
+    克隆音色合成 (声音复刻 2.0 走 WebSocket 双向流式)
+    需 volc.megatts.timbre 资源授权; 失败返回 None
     """
     if not _is_volc_configured() or not custom_speaker_id:
         return None
     from app.services.volc.tts_ws import synthesize_ws
     return synthesize_ws(custom_speaker_id, text, encoding="mp3")
+
+
+def _call_volc_official_tts(text: str) -> Optional[bytes]:
+    """
+    官方精品音色合成 (已开通 volc.service_type.10029, 实测可用)
+    声纹未就绪时的主力方案, 优于 macOS say
+    """
+    if not _is_volc_configured():
+        return None
+    from app.services.volc.tts_http import synthesize_http
+    return synthesize_http(text)
 
 
 # ===== macOS say fallback (本地 dev) =====
@@ -312,15 +323,26 @@ def train_voice(db, profile_id, user_id):
 
 
 def synthesize(db, custom_speaker_id, text, output_path, language=0):
+    """
+    合成优先级: 用户克隆音色 -> 火山官方音色 -> macOS say
+    """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # 1. 用户克隆声纹 (需 volc.megatts.timbre 授权)
     if custom_speaker_id and _is_volc_configured():
         mp3_bytes = _call_volc_synthesize(custom_speaker_id, text, language)
         if mp3_bytes:
             output_path.write_bytes(mp3_bytes)
             return output_path
-        # fallback below
+
+    # 2. 火山官方精品音色 (已开通可用)
+    mp3_bytes = _call_volc_official_tts(text)
+    if mp3_bytes:
+        output_path.write_bytes(mp3_bytes)
+        return output_path
+
+    # 3. 本地兜底
     return _fallback_tts(text, output_path)
 
 
