@@ -29,6 +29,36 @@ from app.schemas.common import ApiResponse
 router = APIRouter(prefix="/voice-profiles", tags=["声纹档案"])
 
 
+# 朗读示例文本: 覆盖常用声韵 + 长度适中 (火山建议 10-30 秒)
+# 用户照读, 参考文本自动准确, 规避 WER 校验失败
+SAMPLE_SCRIPTS = [
+    {
+        "id": "daily",
+        "title": "日常口语",
+        "text": "大家好，很高兴在这里和你见面。今天的天气特别舒服，阳光温和，微风不燥，"
+                "我准备出门走一走，顺便去菜市场买点新鲜的水果和蔬菜。",
+    },
+    {
+        "id": "health",
+        "title": "健康科普",
+        "text": "很多朋友问我，秋天应该怎么养护脾胃。其实方法很简单，第一是三餐规律，"
+                "第二是少吃生冷，第三是饭后适当活动。坚持一段时间，你会明显感觉到变化。",
+    },
+    {
+        "id": "story",
+        "title": "叙述表达",
+        "text": "记得小时候，每到夏天的傍晚，院子里就摆满了竹椅和小板凳。"
+                "大人们坐在一起聊天，孩子们追着萤火虫跑，那种热闹又安静的感觉，现在想起来还是很温暖。",
+    },
+]
+
+
+@router.get("/sample-scripts", response_model=ApiResponse[list])
+def get_sample_scripts():
+    """朗读示例文本 (用户照读录音, 参考文本自动准确)"""
+    return ApiResponse(data=SAMPLE_SCRIPTS)
+
+
 def _to_dict(p: UserVoiceProfile) -> dict:
     return {
         "id": p.id,

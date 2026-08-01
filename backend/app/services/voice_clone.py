@@ -41,7 +41,11 @@ from app.models.voice_profile import UserVoiceProfile
 
 # ===== 业务规则常量 =====
 MAX_PROFILES_PER_USER = 3
-ALLOWED_AUDIO_FORMATS = {"mp3", "wav", "ogg", "m4a", "aac", "pcm"}
+# 火山原生支持的格式
+VOLC_AUDIO_FORMATS = {"mp3", "wav", "ogg", "m4a", "aac", "pcm"}
+# 浏览器 MediaRecorder 输出格式, 需转码后再送火山
+BROWSER_AUDIO_FORMATS = {"webm", "mp4"}
+ALLOWED_AUDIO_FORMATS = VOLC_AUDIO_FORMATS | BROWSER_AUDIO_FORMATS
 MIN_SAMPLE_SECONDS = 3
 MAX_SAMPLE_SECONDS = 60
 MAX_SAMPLE_BYTES = 10 * 1024 * 1024  # 火山限制 10MB
@@ -177,6 +181,42 @@ def _call_volc_official_tts(text: str) -> Optional[bytes]:
     return synthesize_http(text)
 
 
+# ===== 音频转码 (浏览器录音 -> 火山可用格式) =====
+def _transcode_to_mp3(src_bytes: bytes, src_ext: str) -> bytes:
+    """
+    浏览器 MediaRecorder 输出 webm/opus 或 mp4/aac, 火山不支持,
+    统一转 mp3 24kHz mono (火山推荐规格)
+    """
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / f"in.{src_ext}"
+        dst = Path(td) / "out.mp3"
+        src.write_bytes(src_bytes)
+        proc = subprocess.run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src),
+             "-ar", "24000", "-ac", "1", "-b:a", "64k", str(dst)],
+            capture_output=True, text=True, timeout=60,
+        )
+        if proc.returncode != 0 or not dst.exists():
+            raise ValueError(f"音频转码失败: {proc.stderr[-200:]}")
+        return dst.read_bytes()
+
+
+def _probe_duration(audio_bytes: bytes, ext: str) -> Optional[float]:
+    """用 ffmpeg 读音频时长 (秒); 失败返回 None"""
+    with tempfile.TemporaryDirectory() as td:
+        f = Path(td) / f"a.{ext}"
+        f.write_bytes(audio_bytes)
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", str(f)],
+            capture_output=True, text=True, timeout=30,
+        )
+        m = re.search(r"Duration: (\d+):(\d+):(\d+\.?\d*)", proc.stderr)
+        if not m:
+            return None
+        h, mi, s = int(m.group(1)), int(m.group(2)), float(m.group(3))
+        return h * 3600 + mi * 60 + s
+
+
 # ===== macOS say fallback (本地 dev) =====
 def _fallback_tts(text: str, output_path: Path) -> Path:
     """macOS `say` 生成语音, ffmpeg 转 mp3. 非 macOS 抛 NotImplementedError"""
@@ -254,6 +294,19 @@ def upload_sample(db, user_id, file_bytes, filename, name, demo_text, language=0
     if not demo_text or len(demo_text) > 300 or len(demo_text) < 4:
         raise ValueError("试听文本需 4-300 字")
 
+    # 浏览器录音格式转 mp3
+    if fmt in BROWSER_AUDIO_FORMATS:
+        file_bytes = _transcode_to_mp3(file_bytes, fmt)
+        fmt = "mp3"
+
+    # 时长校验 (火山要求 3-60 秒)
+    duration = _probe_duration(file_bytes, fmt)
+    if duration is not None:
+        if duration < MIN_SAMPLE_SECONDS:
+            raise ValueError(f"录音太短 ({duration:.1f}秒), 至少需要 {MIN_SAMPLE_SECONDS} 秒")
+        if duration > MAX_SAMPLE_SECONDS:
+            raise ValueError(f"录音太长 ({duration:.1f}秒), 最多 {MAX_SAMPLE_SECONDS} 秒")
+
     profile = UserVoiceProfile(
         user_id=user_id,
         name=name,
@@ -271,6 +324,8 @@ def upload_sample(db, user_id, file_bytes, filename, name, demo_text, language=0
     sample_path = _samples_dir(user_id) / f"{profile.id}.{fmt}"
     sample_path.write_bytes(file_bytes)
     profile.sample_path = str(sample_path)
+    if duration is not None:
+        profile.sample_duration = int(duration)
 
     db.commit()
     db.refresh(profile)

@@ -44,3 +44,13 @@ export function testVoiceProfile(id: number, text?: string) {
 export function deleteVoiceProfile(id: number) {
   return request.delete(`/voice-profiles/${id}`)
 }
+
+export interface SampleScript {
+  id: string
+  title: string
+  text: string
+}
+
+export function getSampleScripts() {
+  return request.get('/voice-profiles/sample-scripts')
+}
