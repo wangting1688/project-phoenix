@@ -27,6 +27,7 @@ class UserResponse(UserBase):
     id: int
     role: str
     status: int
+    tenant_id: Optional[int] = None
     created_at: datetime
 
     class Config:
@@ -42,4 +43,6 @@ class CurrentUserResponse(BaseModel):
     id: int
     nickname: Optional[str] = None
     avatar: Optional[str] = None
+    role: str = "anchor"
+    tenant_id: Optional[int] = None
     content_profile: Optional[dict] = None

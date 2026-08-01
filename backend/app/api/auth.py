@@ -62,6 +62,8 @@ def get_me(current_user: User = Depends(get_current_user)):
             id=current_user.id,
             nickname=current_user.nickname,
             avatar=current_user.avatar,
+            role=current_user.role,
+            tenant_id=current_user.tenant_id,
             content_profile={"style": "故事型", "category": "健康"},
         )
     )

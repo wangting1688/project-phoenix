@@ -141,6 +141,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/publishCenter/index.vue'),
         meta: { title: '发布中心', requiresAuth: true },
       },
+      {
+        path: 'tenant-manage',
+        name: 'TenantManage',
+        component: () => import('@/views/tenantManage/index.vue'),
+        meta: { title: '渠道商管理', requiresAuth: true, roles: ['super_admin'] },
+      },
     ],
   },
 ]
@@ -150,17 +156,33 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const userStore = useUserStore()
   const token = userStore.token
 
   if (to.meta.requiresAuth && !token) {
-    next({ name: 'Login', query: { redirect: to.fullPath } })
-  } else if ((to.name === 'Login' || to.name === 'Register') && token) {
-    next({ name: 'Home' })
-  } else {
-    next()
+    return next({ name: 'Login', query: { redirect: to.fullPath } })
   }
+  if ((to.name === 'Login' || to.name === 'Register') && token) {
+    return next({ name: 'Home' })
+  }
+
+  // 角色限制路由: userInfo 刷新后会丢, 需先拉取再判断
+  const roles = to.meta.roles as string[] | undefined
+  if (roles?.length && token) {
+    if (!userStore.userInfo) {
+      try {
+        await userStore.fetchUserInfo()
+      } catch {
+        return next({ name: 'Login', query: { redirect: to.fullPath } })
+      }
+    }
+    if (!roles.includes(userStore.userInfo?.role || '')) {
+      return next({ name: 'Home' })
+    }
+  }
+
+  next()
 })
 
 export default router

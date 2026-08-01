@@ -31,6 +31,7 @@ from app.api.ingest import router as ingest_router
 from app.api.platform_account import router as platform_account_router
 from app.api.publish_task import router as publish_task_router
 from app.api.scheduler import router as scheduler_router
+from app.api.tenant import router as tenant_router
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -65,3 +66,4 @@ api_router.include_router(ingest_router)
 api_router.include_router(platform_account_router)
 api_router.include_router(publish_task_router)
 api_router.include_router(scheduler_router)
+api_router.include_router(tenant_router)

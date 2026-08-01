@@ -47,3 +47,6 @@ export const ILike = (ElementPlusIconsVue as any).StarFilled
 export const IChatDotRound = (ElementPlusIconsVue as any).ChatDotRound
 export const IShare = (ElementPlusIconsVue as any).Share
 export const IInfoFilled = (ElementPlusIconsVue as any).InfoFilled
+export const IOffice = (ElementPlusIconsVue as any).OfficeBuilding
+export const IPromotion = (ElementPlusIconsVue as any).Promotion
+export const IConnection = (ElementPlusIconsVue as any).Connection

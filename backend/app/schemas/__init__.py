@@ -7,6 +7,15 @@ from app.schemas.user import (
     LoginResponse,
     CurrentUserResponse,
 )
+from app.schemas.tenant import (
+    TenantCreate,
+    TenantUpdate,
+    TenantResponse,
+    TenantListResponse,
+    TenantLogin,
+    TenantLoginResponse,
+    TenantUserCreate,
+)
 from app.schemas.common import ApiResponse, PaginationParams, PaginationResponse
 from app.schemas.content import (
     ContentProjectCreate,
@@ -38,6 +47,13 @@ __all__ = [
     "UserResponse",
     "LoginResponse",
     "CurrentUserResponse",
+    "TenantCreate",
+    "TenantUpdate",
+    "TenantResponse",
+    "TenantListResponse",
+    "TenantLogin",
+    "TenantLoginResponse",
+    "TenantUserCreate",
     "ApiResponse",
     "PaginationParams",
     "PaginationResponse",

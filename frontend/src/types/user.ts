@@ -5,6 +5,7 @@ export interface User {
   avatar?: string
   role: string
   status: number
+  tenant_id?: number | null
   created_at: string
 }
 
@@ -21,4 +22,31 @@ export interface CurrentUserResponse {
     style: string
     category: string
   }
+}
+
+// ========== 渠道商 ==========
+export interface Tenant {
+  id: number
+  name: string
+  code: string
+  account: string
+  contact_name?: string
+  contact_phone?: string
+  expires_at?: string | null
+  status: number
+  max_users: number
+  max_video_projects: number
+  config?: Record<string, unknown> | null
+  created_at: string
+  updated_at?: string
+}
+
+export interface TenantListResponse {
+  items: Tenant[]
+  total: number
+}
+
+export interface TenantLoginResponse {
+  token: string
+  tenant: Tenant
 }

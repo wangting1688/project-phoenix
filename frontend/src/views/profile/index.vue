@@ -86,6 +86,36 @@
           </div>
         </div>
 
+        <!-- 发布相关: 所有登录用户可用 -->
+        <div class="menu-card card">
+          <div class="menu-item" @click="$router.push('/publish-center')">
+            <div class="menu-left">
+              <el-icon :size="20" class="menu-icon blue"><IPromotion /></el-icon>
+              <span>发布中心</span>
+            </div>
+            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-item" @click="$router.push('/platform-account')">
+            <div class="menu-left">
+              <el-icon :size="20" class="menu-icon green"><IConnection /></el-icon>
+              <span>平台账号</span>
+            </div>
+            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+          </div>
+        </div>
+
+        <!-- 总部管理员：渠道商管理 -->
+        <div v-if="isSuperAdmin" class="menu-card card">
+          <div class="menu-item" @click="$router.push('/tenant-manage')">
+            <div class="menu-left">
+              <el-icon :size="20" class="menu-icon purple"><IOffice /></el-icon>
+              <span>渠道商管理</span>
+            </div>
+            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+          </div>
+        </div>
+
         <el-button
           type="danger"
           plain
@@ -100,7 +130,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
@@ -111,11 +141,16 @@ import {
   IMicrophone,
   ISetting,
   IHelp,
+  IOffice,
+  IPromotion,
+  IConnection,
 } from '@/utils/icons'
 import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
 const userStore = useUserStore()
+
+const isSuperAdmin = computed(() => userStore.userInfo?.role === 'super_admin')
 
 const stats = ref({
   projects: 0,

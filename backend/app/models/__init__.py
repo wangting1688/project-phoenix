@@ -1,3 +1,4 @@
+from app.models.tenant import Tenant
 from app.models.user import User
 from app.models.content import (
     ContentProject,
@@ -88,6 +89,7 @@ from app.models.publish_task import PublishTask
 from app.models.voice_profile import UserVoiceProfile
 
 __all__ = [
+    "Tenant",
     "User",
     "ContentProject",
     "Content",
