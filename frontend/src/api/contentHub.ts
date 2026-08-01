@@ -6,19 +6,19 @@ export interface ContentOpportunity {
   category: string
   opening: string
   summary: string
+  pain_point: string
+  recommend_reason: string
   trend_score: number
   consult_score: number
   creator_match: number
   original_score: number
   final_score: number
+  source: string
   created_at: string
 }
 
 export interface OpportunityDetail extends ContentOpportunity {
-  pain_point: string
-  recommend_reason: string
   subcategory: string
-  source: string
 }
 
 export interface CategoryData {

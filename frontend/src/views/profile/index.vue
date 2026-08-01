@@ -43,7 +43,7 @@
             <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
           </div>
           <div class="menu-divider"></div>
-          <div class="menu-item" @click="showComingSoon">
+          <div class="menu-item" @click="$router.push('/data-entry')">
             <div class="menu-left">
               <el-icon :size="20" class="menu-icon blue"><IDataAnalysis /></el-icon>
               <span>数据分析</span>
@@ -51,7 +51,7 @@
             <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
           </div>
           <div class="menu-divider"></div>
-          <div class="menu-item" @click="showComingSoon">
+          <div class="menu-item" @click="$router.push('/creator-profile')">
             <div class="menu-left">
               <el-icon :size="20" class="menu-icon green"><IUser /></el-icon>
               <span>AI画像</span>
@@ -81,6 +81,57 @@
             <div class="menu-left">
               <el-icon :size="20" class="menu-icon red"><IHelp /></el-icon>
               <span>帮助与反馈</span>
+            </div>
+            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+          </div>
+        </div>
+
+        <!-- 创作工具: AI 辅助能力 -->
+        <div class="menu-card card">
+          <div class="menu-item" @click="$router.push('/asset-library')">
+            <div class="menu-left">
+              <el-icon :size="20" class="menu-icon purple"><IPicture /></el-icon>
+              <span>素材库</span>
+            </div>
+            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-item" @click="$router.push('/asset-collection')">
+            <div class="menu-left">
+              <el-icon :size="20" class="menu-icon blue"><IVideoCamera /></el-icon>
+              <span>素材采集建议</span>
+            </div>
+            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-item" @click="$router.push('/shooting-assistant')">
+            <div class="menu-left">
+              <el-icon :size="20" class="menu-icon orange"><ISparkles /></el-icon>
+              <span>拍摄助手</span>
+            </div>
+            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-item" @click="$router.push('/video-production')">
+            <div class="menu-left">
+              <el-icon :size="20" class="menu-icon green"><IScissors /></el-icon>
+              <span>视频生产</span>
+            </div>
+            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-item" @click="$router.push('/video-director')">
+            <div class="menu-left">
+              <el-icon :size="20" class="menu-icon purple"><IVideoPlay /></el-icon>
+              <span>AI 导演</span>
+            </div>
+            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+          </div>
+          <div class="menu-divider"></div>
+          <div class="menu-item" @click="$router.push('/director-learning')">
+            <div class="menu-left">
+              <el-icon :size="20" class="menu-icon red"><IStar /></el-icon>
+              <span>导演学习记录</span>
             </div>
             <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
           </div>
@@ -144,6 +195,11 @@ import {
   IOffice,
   IPromotion,
   IConnection,
+  IPicture,
+  ISparkles,
+  IScissors,
+  IVideoPlay,
+  IStar,
 } from '@/utils/icons'
 import { useUserStore } from '@/stores/user'
 

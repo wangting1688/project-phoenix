@@ -76,18 +76,27 @@
 
       <div v-if="selectedMethod === 'recommend'" class="recommend-section">
         <h3 class="section-title">选择推荐主题</h3>
+
+        <div v-if="loadingRecommend" class="recommend-tip">正在加载推荐...</div>
+
+        <div v-else-if="!recommendations.length" class="recommend-empty card">
+          <p>还没有内容推荐。</p>
+          <p class="empty-sub">推荐来自「爆款视频解析」，先解析几个同行爆款，这里就会出现选题。</p>
+          <el-button size="small" @click="selectMethod('viral_analysis')">去解析爆款</el-button>
+        </div>
+
         <div
           v-for="(item, index) in recommendations"
-          :key="index"
+          :key="item.id"
           class="recommend-card card"
           :class="{ selected: selectedRecommend === index }"
           @click="selectRecommend(index)"
         >
           <div class="recommend-header">
-            <span class="level-tag" :class="'level-' + item.level">{{ item.level }}</span>
+            <span class="level-tag">{{ Math.round(item.final_score) }}</span>
             <span class="recommend-title">{{ item.title }}</span>
           </div>
-          <p class="recommend-reason">{{ item.reason }}</p>
+          <p class="recommend-reason">{{ item.recommend_reason || item.summary }}</p>
         </div>
       </div>
 
@@ -115,6 +124,7 @@ import {
   IEdit,
 } from '@/utils/icons'
 import { createProject } from '@/api/creation'
+import { getRecommendations, type ContentOpportunity } from '@/api/contentHub'
 
 const route = useRoute()
 const router = useRouter()
@@ -125,26 +135,22 @@ const videoUrl = ref('')
 const selectedRecommend = ref(-1)
 const creating = ref(false)
 
-const recommendations = ref([
-  {
-    level: 'A',
-    title: '睡眠成为近期热门话题',
-    reason: '45岁女性对睡眠质量的关注增长明显，你过去情绪类视频咨询率较高',
-    topic: '睡眠不好怎么办',
-  },
-  {
-    level: 'B',
-    title: '肠道健康咨询潜力高',
-    reason: '最近肠道健康相关内容转化率提升，适合你的受众群体',
-    topic: '肠胃不好怎么调理',
-  },
-  {
-    level: 'C',
-    title: '更年期话题容易涨粉',
-    reason: '更年期相关内容互动率高，适合建立专家人设',
-    topic: '更年期怎么调理',
-  },
-])
+const recommendations = ref<ContentOpportunity[]>([])
+const loadingRecommend = ref(false)
+
+async function loadRecommendations() {
+  if (recommendations.value.length || loadingRecommend.value) return
+  loadingRecommend.value = true
+  try {
+    // 取综合评分最高的一批 (E: 历史爆款按 final_score 排序)
+    recommendations.value = (await getRecommendations('E', 5)) || []
+  } catch (error) {
+    console.error('加载推荐失败:', error)
+    recommendations.value = []
+  } finally {
+    loadingRecommend.value = false
+  }
+}
 
 const canStart = computed(() => {
   if (selectedMethod.value === 'custom') {
@@ -167,16 +173,22 @@ onMounted(() => {
   if (route.query.topic) {
     topic.value = route.query.topic as string
   }
+  if (selectedMethod.value === 'recommend') {
+    loadRecommendations()
+  }
 })
 
 function selectMethod(method: string) {
   selectedMethod.value = method
   selectedRecommend.value = -1
+  if (method === 'recommend') {
+    loadRecommendations()
+  }
 }
 
 function selectRecommend(index: number) {
   selectedRecommend.value = index
-  topic.value = recommendations.value[index].topic
+  topic.value = recommendations.value[index].title
 }
 
 async function startCreation() {
@@ -184,7 +196,7 @@ async function startCreation() {
 
   let finalTopic = topic.value
   if (selectedMethod.value === 'recommend' && selectedRecommend.value >= 0) {
-    finalTopic = recommendations.value[selectedRecommend.value].topic
+    finalTopic = recommendations.value[selectedRecommend.value].title
   }
   if (selectedMethod.value === 'viral_analysis') {
     finalTopic = '爆款解析：' + videoUrl.value
@@ -333,28 +345,44 @@ async function startCreation() {
 }
 
 .level-tag {
-  width: 28px;
+  min-width: 32px;
   height: 28px;
-  border-radius: 50%;
+  padding: 0 6px;
+  border-radius: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: bold;
-  font-size: 14px;
+  font-size: 13px;
   margin-right: 10px;
   color: #fff;
+  flex-shrink: 0;
+  background: linear-gradient(135deg, #667eea, #764ba2);
 }
 
-.level-A {
-  background: linear-gradient(135deg, #ff6b6b, #feca57);
+.recommend-tip {
+  padding: 20px;
+  text-align: center;
+  color: #909399;
+  font-size: 13px;
 }
 
-.level-B {
-  background: linear-gradient(135deg, #5f27cd, #a29bfe);
+.recommend-empty {
+  padding: 24px;
+  text-align: center;
 }
 
-.level-C {
-  background: linear-gradient(135deg, #00d2d3, #54a0ff);
+.recommend-empty p {
+  margin: 0 0 8px;
+  font-size: 14px;
+  color: #606266;
+}
+
+.recommend-empty .empty-sub {
+  font-size: 13px;
+  color: #909399;
+  line-height: 1.6;
+  margin-bottom: 14px;
 }
 
 .recommend-title {
