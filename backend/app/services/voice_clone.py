@@ -303,6 +303,10 @@ def train_voice(db, profile_id, user_id):
         db.refresh(profile)
         return profile
 
+    # 已训练成功的音色不允许重训 (火山会报 custom_speaker_id is activated)
+    if profile.status == "active" and profile.icl_speaker_id:
+        raise ValueError("该声纹已训练完成, 无需重复训练。如需重新训练请先删除后重新上传样本")
+
     sample_bytes = Path(profile.sample_path).read_bytes()
     fmt = Path(profile.sample_path).suffix.lstrip(".")
 
@@ -318,8 +322,17 @@ def train_voice(db, profile_id, user_id):
 
     profile.volc_status = result.get("status", 1)
     profile.available_training_times = result.get("available_training_times", 0)
+    msg = result.get("message") or ""
     if result.get("code") != 0:
-        profile.error_message = result.get("message", "训练失败")
+        # "custom_speaker_id is activated" 说明音色已就绪, 不是失败
+        if "activated" in msg.lower():
+            profile.status = "active"
+            profile.volc_status = 2
+            profile.error_message = None
+            db.commit()
+            db.refresh(profile)
+            return profile
+        profile.error_message = msg or "训练失败"
     else:
         profile.error_message = None
 
