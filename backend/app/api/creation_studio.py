@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any
 
 from app.api.deps import get_current_user
 from app.services.creation_studio_service import CreationStudioService
+from app.services import tenant_service
 
 router = APIRouter(prefix="/creation-studio", tags=["AI创作工作台"])
 
@@ -114,6 +115,8 @@ async def generate_content(
             "success": True,
             "data": result
         }
+    except tenant_service.QuotaExceededError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     finally:

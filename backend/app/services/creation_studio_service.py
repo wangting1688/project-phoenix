@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models import (
     CreationSession, ContentProject, ContentOpportunity,
-    Planning, Script, Review, Content, WorkflowTask
+    Planning, Script, Review, Content, WorkflowTask, User
 )
 from app.workflow.orchestrator import WorkflowOrchestrator
 
@@ -126,7 +126,12 @@ class CreationStudioService:
         topic = self._get_topic(session)
         config = session.config or {}
 
-        # 创建项目
+        # 创建项目前校验视频项目配额
+        from app.services import tenant_service
+        owner = self.db.query(User).filter(User.id == session.user_id).first()
+        if owner:
+            tenant_service.ensure_project_quota(self.db, owner)
+
         project = ContentProject(
             user_id=session.user_id,
             source_type=session.source_type,

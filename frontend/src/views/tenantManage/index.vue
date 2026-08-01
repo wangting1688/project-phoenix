@@ -81,11 +81,11 @@
         </el-form-item>
         <el-form-item label="子账号配额">
           <el-input-number v-model="formData.max_users" :min="1" :max="1000" />
-          <span style="margin-left: 10px; color: #909399; font-size: 13px">个</span>
+          <span class="quota-hint">个（该用户下最多可开通的账号数）</span>
         </el-form-item>
         <el-form-item label="视频项目配额">
           <el-input-number v-model="formData.max_video_projects" :min="1" :max="10000" />
-          <span style="margin-left: 10px; color: #909399; font-size: 13px">个</span>
+          <span class="quota-hint">个（该用户及其子账号累计可创建的项目数）</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -332,6 +332,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.quota-hint { margin-left: 10px; color: #909399; font-size: 13px; }
 .tenant-manage {
   padding: 20px;
 }

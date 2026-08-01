@@ -110,6 +110,38 @@ def count_tenant_users(db: Session, tenant_id: int) -> int:
     return db.query(User).filter(User.tenant_id == tenant_id).count()
 
 
+class QuotaExceededError(ValueError):
+    """配额超限; 继承 ValueError 以兼容既有 except ValueError 分支"""
+
+
+def count_tenant_projects(db: Session, tenant_id: int) -> int:
+    """统计该用户(租户)下所有成员已创建的视频项目总数"""
+    from app.models import ContentProject
+    return (
+        db.query(ContentProject)
+        .join(User, ContentProject.user_id == User.id)
+        .filter(User.tenant_id == tenant_id)
+        .count()
+    )
+
+
+def ensure_project_quota(db: Session, user: User) -> None:
+    """创建视频项目前校验配额; 超限抛 ValueError
+
+    总部管理员(无 tenant_id)不受限。
+    """
+    if not user.tenant_id:
+        return
+    tenant = get_tenant_by_id(db, user.tenant_id)
+    if not tenant:
+        return
+    used = count_tenant_projects(db, user.tenant_id)
+    if used >= tenant.max_video_projects:
+        raise QuotaExceededError(
+            f"已达到视频项目数量上限（{tenant.max_video_projects}个），请联系管理员提升配额"
+        )
+
+
 def create_tenant_user(db: Session, tenant_id: int, phone: str, password: str,
                        nickname: str = None, role: str = "anchor") -> User:
     """创建子账号"""
