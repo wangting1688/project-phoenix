@@ -23,9 +23,11 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 PATH = "/api/v3/tts/unidirectional"
-RESOURCE_BIGTTS = "volc.service_type.10029"    # 大模型语音合成 (官方音色)
-RESOURCE_CLONE_TRAIN = "volc.megatts.timbre"   # 声音复刻 - 训练音色
-RESOURCE_CLONE_SYNTH = "volc.megatts.voiceclone"  # 声音复刻 - 合成 (实测正确)
+RESOURCE_BIGTTS = "volc.service_type.10029"     # 大模型语音合成 (官方音色)
+RESOURCE_CLONE_TRAIN = "volc.megatts.timbre"    # 声音复刻 - 训练音色
+# 声音复刻 - 合成. 实测: default 走账号自带免费并发额度 (2~5 并发);
+# voiceclone 是付费并发资源, 未采购时报 45000292 quota exceeded
+RESOURCE_CLONE_SYNTH = "volc.megatts.default"
 
 # 官方默认音色 (声纹未就绪时的兜底)
 DEFAULT_SPEAKER = "zh_female_shuangkuaisisi_moon_bigtts"

@@ -389,10 +389,9 @@ def test_synthesize(db, profile_id, user_id, text):
     ).first()
     if not profile:
         raise ValueError("声纹档案不存在")
-    # 优先 icl_speaker_id (火山内部 ID), 回退 custom_speaker_id
-    custom_id = None
-    if profile.status == "active":
-        custom_id = getattr(profile, "icl_speaker_id", None) or profile.custom_speaker_id
+    # 合成用 custom_speaker_id (实测: megatts.default 只认我方自定义 ID,
+    # 传 icl_speaker_id 会报 55000000 resource/speaker mismatch)
+    custom_id = profile.custom_speaker_id if profile.status == "active" else None
 
     out = _demos_dir(user_id) / f"test_{profile_id}_{int(time.time())}.mp3"
     return synthesize(
