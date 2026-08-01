@@ -268,9 +268,10 @@ def _validate_audio_format(filename: str) -> str:
 
 
 def _count_user_profiles(db: Session, user_id: int) -> int:
+    # failed 档案在火山侧未转正, 不占槽位, 因此不计入配额, 避免重录被挡
     return db.query(UserVoiceProfile).filter(
         UserVoiceProfile.user_id == user_id,
-        UserVoiceProfile.status != "deleted",
+        UserVoiceProfile.status.notin_(["deleted", "failed"]),
     ).count()
 
 
@@ -387,7 +388,11 @@ def train_voice(db, profile_id, user_id):
             db.commit()
             db.refresh(profile)
             return profile
-        profile.error_message = msg or "训练失败"
+        code = result.get("code")
+        if code == 45001109 or "wer" in msg.lower():
+            profile.error_message = "朗读内容与示例文本差异过大, 请照着屏幕上的文字逐字朗读后重试"
+        else:
+            profile.error_message = msg or "训练失败"
     else:
         profile.error_message = None
 
