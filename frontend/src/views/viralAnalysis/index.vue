@@ -29,15 +29,15 @@
             <span class="manual-title">
               填写视频真实信息
               <span class="manual-badge" :class="{ on: hasManualInput }">
-                {{ hasManualInput ? '已填写' : '建议填写' }}
+                {{ hasManualInput ? '已填写' : '必填' }}
               </span>
             </span>
             <span class="manual-toggle">{{ showManual ? '收起' : '展开' }}</span>
           </div>
 
           <p class="manual-hint">
-            平台未开放视频数据接口，不填写时系统只能用示例数据分析，结论仅供参考。<br />
-            照着视频页面把标题和互动数抄进来，AI 才能给出贴合这条视频的拆解。
+            平台未开放视频数据接口，需要你照抄视频信息，AI 才能拆解这条视频。<br />
+            标题必填；互动数据填得越全，拆解越准。
           </p>
 
           <div v-show="showManual" class="manual-form">
@@ -67,7 +67,7 @@
                 <el-input v-model="manual.collect_count" type="number" placeholder="如 31000" />
               </div>
             </div>
-            <p class="manual-note">数字带「万」的请换算成完整数字，例如 28.6万 填 286000。只填标题也可以。</p>
+            <p class="manual-note">数字带「万」的请换算成完整数字，例如 28.6万 填 286000。</p>
           </div>
         </div>
 
@@ -75,7 +75,7 @@
           <el-button
             type="primary"
             size="large"
-            :disabled="!videoUrl.trim()"
+            :disabled="!videoUrl.trim() || !manual.title.trim()"
             :loading="analyzing"
             @click="startAnalysis"
           >
@@ -329,7 +329,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -347,7 +347,21 @@ const step = ref<'input' | 'analyzing' | 'result' | 'opportunity'>('input')
 const videoUrl = ref('')
 const analyzing = ref(false)
 
-const showManual = ref(false)
+const showManual = ref(true)
+const timers: number[] = []
+
+function pushTimer(fn: () => void, delay: number) {
+  timers.push(window.setTimeout(fn, delay))
+}
+
+function clearTimers() {
+  while (timers.length) {
+    const t = timers.pop()
+    if (t) window.clearTimeout(t)
+  }
+}
+
+onUnmounted(clearTimers)
 const manual = ref({
   title: '',
   duration: '',
@@ -391,6 +405,11 @@ const formatNumber = (num: number) => {
 
 const startAnalysis = async () => {
   if (!videoUrl.value.trim()) return
+  if (!manual.value.title.trim()) {
+    showManual.value = true
+    ElMessage.warning('请先填写对标视频的标题，系统不会编造视频数据')
+    return
+  }
   
   step.value = 'analyzing'
   analyzing.value = true
@@ -400,7 +419,6 @@ const startAnalysis = async () => {
     // 1. 创建分析会话
     analyzingStep.value = '正在创建分析任务...'
     progressPercent.value = 10
-    await new Promise(r => setTimeout(r, 500))
 
     const createRes = await createAnalysis(videoUrl.value.trim(), buildVideoInfo())
     if (!createRes) {
@@ -408,35 +426,27 @@ const startAnalysis = async () => {
     }
     sessionId.value = createRes.session_id
 
-    // 2. 执行分析
+    // 2. 执行分析 (真实 AI 调用, 约 30-60s, 期间按阶段推进提示)
     analyzingStep.value = 'AI正在分析视频内容...'
     progressPercent.value = 30
-    await new Promise(r => setTimeout(r, 800))
-
-    analyzingStep.value = '正在拆解内容结构...'
-    progressPercent.value = 50
-    await new Promise(r => setTimeout(r, 800))
-
-    analyzingStep.value = '正在分析爆点因素...'
-    progressPercent.value = 70
-    await new Promise(r => setTimeout(r, 800))
-
-    analyzingStep.value = '正在计算匹配度...'
-    progressPercent.value = 90
-    await new Promise(r => setTimeout(r, 500))
-
-    const analyzeRes = await analyzeVideo(sessionId.value)
+    const analyzePromise = analyzeVideo(sessionId.value)
+    pushTimer(() => { analyzingStep.value = '正在拆解内容结构...'; progressPercent.value = 50 }, 5000)
+    pushTimer(() => { analyzingStep.value = '正在分析爆点因素...'; progressPercent.value = 70 }, 15000)
+    pushTimer(() => { analyzingStep.value = '正在计算匹配度...'; progressPercent.value = 90 }, 30000)
+    const analyzeRes = await analyzePromise
+    clearTimers()
     if (analyzeRes) {
       analysisResult.value = analyzeRes
       progressPercent.value = 100
       step.value = 'result'
       ElMessage.success('分析完成！')
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Analysis failed:', error)
-    ElMessage.error('分析失败，请重试')
+    ElMessage.error(error?.message || '分析失败，请重试')
     step.value = 'input'
   } finally {
+    clearTimers()
     analyzing.value = false
   }
 }

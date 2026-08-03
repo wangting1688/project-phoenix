@@ -91,12 +91,13 @@ class ViralAnalysisService:
         session.status = "analyzing"
         self.db.commit()
 
-        # 1. 获取基础信息: 优先用创建时录入的真实数据, 否则回落模拟
+        # 1. 基础信息必须来自用户录入 (系统无采集能力, 不编造假视频数据)
         basic_info = session.original_data or {}
-        if basic_info.get("data_source") == "manual" and basic_info.get("title"):
-            basic_info = {k: v for k, v in basic_info.items() if v is not None}
-        else:
-            basic_info = self._extract_basic_info(session.video_url)
+        if not (basic_info.get("data_source") == "manual" and basic_info.get("title")):
+            session.status = "pending"
+            self.db.commit()
+            raise ValueError("请先填写对标视频的真实信息（标题必填），系统不会编造视频数据")
+        basic_info = {k: v for k, v in basic_info.items() if v is not None}
         session.original_data = basic_info
 
         # 2. AI内容分析
@@ -215,35 +216,6 @@ class ViralAnalysisService:
         elif "weixin.qq.com" in url or "mp.weixin.qq.com" in url:
             return "视频号"
         return "未知"
-
-    def _extract_basic_info(self, url: str) -> Dict[str, Any]:
-        """提取视频基础信息（模拟，用户未录入真实数据时的回落）"""
-        return {
-            "title": self._generate_mock_title(url),
-            "platform": self._extract_platform(url),
-            "duration": random.randint(30, 120),
-            "like_count": random.randint(10000, 500000),
-            "comment_count": random.randint(500, 20000),
-            "share_count": random.randint(1000, 50000),
-            "collect_count": random.randint(500, 30000),
-            "data_source": "mock",
-        }
-
-    def _generate_mock_title(self, url: str) -> str:
-        """生成模拟标题"""
-        titles = [
-            "为什么很多人睡够8小时还是累？这个方法帮你解决",
-            "30岁以后身体越来越差？这三个习惯一定要改",
-            "吃了这么多年早餐，原来我一直吃错了",
-            "失眠的人一定要看！这几种食物千万不能吃",
-            "为什么女性更容易失眠？医生终于说出真相",
-            "每天坚持这5分钟，一个月后身体大变样",
-            "别再瞎养生了！这几个误区很多人都踩过",
-            "压力大睡不好？试试这个简单方法",
-            "40岁以后，这三个部位一定要保护好",
-            "为什么你减肥总是反弹？原因在这里",
-        ]
-        return titles[hash(url) % len(titles)]
 
     def _run_ai_analysis(self, basic_info: Dict[str, Any], user_id: int) -> Dict[str, Any]:
         """执行AI分析: 调用大模型拆解爆款, 失败时降级为模拟结果"""
@@ -377,7 +349,8 @@ class ViralAnalysisService:
         ).first()
 
         if not profile:
-            return random.randint(60, 85)
+            # 无主播画像时无法真实匹配, 返回中性分而非随机数
+            return 60
 
         score = 60
 
@@ -390,7 +363,7 @@ class ViralAnalysisService:
         if profile_category and profile_category in analysis.get("commercial_fit", {}).get("fit_for", []):
             score += 15
 
-        return min(100, score + random.randint(0, 10))
+        return min(100, score)
 
     def _generate_original_title(self, analysis: Dict[str, Any], creator_info: Dict[str, Any]) -> str:
         """基于分析结果生成原创标题: 优先 AI, 失败降级为模板"""

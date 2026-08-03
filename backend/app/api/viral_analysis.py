@@ -53,7 +53,7 @@ async def create_analysis(
 
 
 @router.post("/{session_id}/analyze")
-async def analyze_video(
+def analyze_video(
     session_id: int,
     current_user = Depends(get_current_user)
 ):
@@ -63,7 +63,7 @@ async def analyze_video(
         result = service.analyze_video(session_id)
         return {"success": True, "data": result}
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         service.close()
 
@@ -85,7 +85,7 @@ async def get_analysis_result(
 
 
 @router.post("/{session_id}/generate")
-async def generate_opportunity(
+def generate_opportunity(
     session_id: int,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
