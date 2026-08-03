@@ -282,7 +282,7 @@ def render_video(
         cmd,
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=600,
     )
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg 失败 (rc={proc.returncode}): {proc.stderr[-500:]}")
