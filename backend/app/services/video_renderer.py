@@ -249,7 +249,7 @@ def render_video(
         audio_idx = n
         audio_filter = (
             f"[{audio_idx}:a]atrim=0:{total_dur},asetpts=PTS-STARTPTS,"
-            f"apad=whole_dur={total_dur}[aout]"
+            f"apad=whole_len={int(total_dur * 24000)}[aout]"
         )
         vf_arg = vf_arg + ";" + audio_filter
         map_args = ["-map", "[outv]", "-map", "[aout]"]
