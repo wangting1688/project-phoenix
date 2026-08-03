@@ -184,7 +184,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -205,6 +205,16 @@ const generating = ref(false)
 const sessionId = ref<number>(0)
 const result = ref<CreationResult | null>(null)
 const currentStep = ref('planning')
+const stepTimers: number[] = []
+
+function clearStepTimers() {
+  while (stepTimers.length) {
+    const t = stepTimers.pop()
+    if (t) window.clearTimeout(t)
+  }
+}
+
+onUnmounted(clearStepTimers)
 const qualityReview = ref<ReviewResult | null>(null)
 
 const opportunity = ref<any>(null)
@@ -273,16 +283,13 @@ const startGeneration = async () => {
       tone: selectedTone.value,
     })
 
-    // Simulate step progression
+    // 3. Generate (后端真实 AI 生成, 耗时较长, 前端按阶段推进提示)
     currentStep.value = 'planning'
-    await new Promise(r => setTimeout(r, 800))
-    currentStep.value = 'scripting'
-    await new Promise(r => setTimeout(r, 800))
-    currentStep.value = 'reviewing'
-    await new Promise(r => setTimeout(r, 800))
-
-    // 3. Generate
-    const genRes = await generateContent(sessionId.value)
+    const genPromise = generateContent(sessionId.value)
+    stepTimers.push(window.setTimeout(() => { currentStep.value = 'scripting' }, 3000))
+    stepTimers.push(window.setTimeout(() => { currentStep.value = 'reviewing' }, 30000))
+    const genRes = await genPromise
+    clearStepTimers()
     if (genRes) {
       result.value = genRes
       step.value = 'result'
@@ -305,11 +312,12 @@ const startGeneration = async () => {
 
       ElMessage.success('创作完成！')
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error('Generation failed:', error)
-    ElMessage.error('创作失败，请重试')
+    ElMessage.error(error?.message || '创作失败，请重试')
     step.value = 'config'
   } finally {
+    clearStepTimers()
     generating.value = false
   }
 }

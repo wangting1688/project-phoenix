@@ -9,21 +9,6 @@
       <div class="creation-methods">
         <div
           class="method-card"
-          :class="{ active: selectedMethod === 'recommend' }"
-          @click="selectMethod('recommend')"
-        >
-          <div class="method-icon recommend">
-            <el-icon :size="28"><IFire /></el-icon>
-          </div>
-          <div class="method-info">
-            <h3>AI推荐内容</h3>
-            <p>系统根据热点和你的画像推荐</p>
-          </div>
-          <el-radio :model-value="selectedMethod === 'recommend'" />
-        </div>
-
-        <div
-          class="method-card"
           :class="{ active: selectedMethod === 'viral_analysis' }"
           @click="selectMethod('viral_analysis')"
         >
@@ -66,38 +51,10 @@
       </div>
 
       <div v-if="selectedMethod === 'viral_analysis'" class="input-section card">
-        <h3>粘贴视频链接</h3>
-        <el-input
-          v-model="videoUrl"
-          placeholder="粘贴抖音/快手/视频号链接"
-          clearable
-        />
-      </div>
-
-      <div v-if="selectedMethod === 'recommend'" class="recommend-section">
-        <h3 class="section-title">选择推荐主题</h3>
-
-        <div v-if="loadingRecommend" class="recommend-tip">正在加载推荐...</div>
-
-        <div v-else-if="!recommendations.length" class="recommend-empty card">
-          <p>还没有内容推荐。</p>
-          <p class="empty-sub">推荐来自「爆款视频解析」，先解析几个同行爆款，这里就会出现选题。</p>
-          <el-button size="small" @click="selectMethod('viral_analysis')">去解析爆款</el-button>
-        </div>
-
-        <div
-          v-for="(item, index) in recommendations"
-          :key="item.id"
-          class="recommend-card card"
-          :class="{ selected: selectedRecommend === index }"
-          @click="selectRecommend(index)"
-        >
-          <div class="recommend-header">
-            <span class="level-tag">{{ Math.round(item.final_score) }}</span>
-            <span class="recommend-title">{{ item.title }}</span>
-          </div>
-          <p class="recommend-reason">{{ item.recommend_reason || item.summary }}</p>
-        </div>
+        <h3>爆款视频解析</h3>
+        <p class="method-hint">
+          填写对标视频的真实数据，AI 会拆解爆点并生成你的原创选题与文案。
+        </p>
       </div>
 
       <el-button
@@ -108,7 +65,7 @@
         :disabled="!canStart"
         @click="startCreation"
       >
-        开始AI创作
+        {{ selectedMethod === 'viral_analysis' ? '去解析爆款视频' : '开始AI创作' }}
       </el-button>
     </div>
   </div>
@@ -119,92 +76,49 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  IFire,
   IVideoPlay,
   IEdit,
 } from '@/utils/icons'
 import { createProject } from '@/api/creation'
-import { getRecommendations, type ContentOpportunity } from '@/api/contentHub'
 
 const route = useRoute()
 const router = useRouter()
 
 const selectedMethod = ref('custom')
 const topic = ref('')
-const videoUrl = ref('')
-const selectedRecommend = ref(-1)
 const creating = ref(false)
 
-const recommendations = ref<ContentOpportunity[]>([])
-const loadingRecommend = ref(false)
-
-async function loadRecommendations() {
-  if (recommendations.value.length || loadingRecommend.value) return
-  loadingRecommend.value = true
-  try {
-    // 取综合评分最高的一批 (E: 历史爆款按 final_score 排序)
-    recommendations.value = (await getRecommendations('E', 5)) || []
-  } catch (error) {
-    console.error('加载推荐失败:', error)
-    recommendations.value = []
-  } finally {
-    loadingRecommend.value = false
-  }
-}
-
 const canStart = computed(() => {
-  if (selectedMethod.value === 'custom') {
-    return topic.value.trim().length > 0
-  }
-  if (selectedMethod.value === 'viral_analysis') {
-    return videoUrl.value.trim().length > 0
-  }
-  if (selectedMethod.value === 'recommend') {
-    return selectedRecommend.value >= 0
-  }
-  return false
+  if (selectedMethod.value === 'viral_analysis') return true
+  return topic.value.trim().length > 0
 })
 
 onMounted(() => {
   const type = route.query.type as string
-  if (type) {
+  if (type === 'custom' || type === 'viral_analysis') {
     selectedMethod.value = type
   }
   if (route.query.topic) {
     topic.value = route.query.topic as string
   }
-  if (selectedMethod.value === 'recommend') {
-    loadRecommendations()
-  }
 })
 
 function selectMethod(method: string) {
   selectedMethod.value = method
-  selectedRecommend.value = -1
-  if (method === 'recommend') {
-    loadRecommendations()
-  }
-}
-
-function selectRecommend(index: number) {
-  selectedRecommend.value = index
-  topic.value = recommendations.value[index].title
 }
 
 async function startCreation() {
   if (!canStart.value) return
 
-  let finalTopic = topic.value
-  if (selectedMethod.value === 'recommend' && selectedRecommend.value >= 0) {
-    finalTopic = recommendations.value[selectedRecommend.value].title
-  }
+  // 爆款解析有独立的真实解析流程 (拆解爆点→生成原创选题), 不能只把链接当主题丢给 AI
   if (selectedMethod.value === 'viral_analysis') {
-    finalTopic = '爆款解析：' + videoUrl.value
+    router.push('/viral-analysis')
+    return
   }
 
   creating.value = true
   try {
-    const res = await createProject(selectedMethod.value, finalTopic)
+    const res = await createProject(selectedMethod.value, topic.value)
     ElMessage.success('创作项目已创建')
     router.push({
       path: '/result',
@@ -282,10 +196,6 @@ async function startCreation() {
   flex-shrink: 0;
 }
 
-.method-icon.recommend {
-  background: linear-gradient(135deg, #ff6b6b, #feca57);
-}
-
 .method-icon.viral {
   background: linear-gradient(135deg, #5f27cd, #341f97);
 }
@@ -322,79 +232,11 @@ async function startCreation() {
   color: #303133;
 }
 
-.recommend-section {
-  margin-bottom: 20px;
-}
-
-.recommend-card {
-  cursor: pointer;
-  margin-bottom: 12px;
-  border: 2px solid transparent;
-  transition: all 0.3s;
-}
-
-.recommend-card.selected {
-  border-color: #667eea;
-  box-shadow: 0 4px 20px rgba(102, 126, 234, 0.3);
-}
-
-.recommend-header {
-  display: flex;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.level-tag {
-  min-width: 32px;
-  height: 28px;
-  padding: 0 6px;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: bold;
-  font-size: 13px;
-  margin-right: 10px;
-  color: #fff;
-  flex-shrink: 0;
-  background: linear-gradient(135deg, #667eea, #764ba2);
-}
-
-.recommend-tip {
-  padding: 20px;
-  text-align: center;
-  color: #909399;
-  font-size: 13px;
-}
-
-.recommend-empty {
-  padding: 24px;
-  text-align: center;
-}
-
-.recommend-empty p {
-  margin: 0 0 8px;
-  font-size: 14px;
-  color: #606266;
-}
-
-.recommend-empty .empty-sub {
+.method-hint {
   font-size: 13px;
   color: #909399;
   line-height: 1.6;
-  margin-bottom: 14px;
-}
-
-.recommend-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.recommend-reason {
-  font-size: 13px;
-  color: #909399;
-  line-height: 1.5;
+  margin: 0;
 }
 
 .start-btn {

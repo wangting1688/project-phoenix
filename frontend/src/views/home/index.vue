@@ -239,7 +239,7 @@ async function loadPipelineExtras() {
 function selectRecommend(item: ContentOpportunity) {
   router.push({
     path: '/creation',
-    query: { type: 'recommend', topic: item.title },
+    query: { type: 'custom', topic: item.title },
   })
 }
 

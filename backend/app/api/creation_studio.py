@@ -102,7 +102,7 @@ async def configure_session(
 
 
 @router.post("/generate")
-async def generate_content(
+def generate_content(
     request: GenerateRequest,
     current_user = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -118,7 +118,7 @@ async def generate_content(
     except tenant_service.QuotaExceededError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e))
     finally:
         service.close()
 
