@@ -32,6 +32,7 @@ def get_task_status(
             status=task.status,
             progress=task.progress,
             current_step=project.workflow_status or task.task_type,
+            error_message=task.error_message if task.status == "failed" else None,
         )
     )
 

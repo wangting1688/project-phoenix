@@ -18,7 +18,11 @@ class BaseWorkflow(ABC):
         ).first()
         if task:
             task.status = status
-            task.progress = progress
+            if status == "failed":
+                # 失败时保留已达成的进度, 便于定位卡在哪一步
+                task.error_message = result
+            else:
+                task.progress = progress
             if result:
                 task.result = result
             self.db.commit()

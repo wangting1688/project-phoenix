@@ -68,6 +68,6 @@ class ScriptWorkflow(BaseWorkflow):
 
         except Exception as e:
             result["error"] = f"文案生成失败: {str(e)}"
-            self._update_task("full_creation", "failed", 0, result["error"])
+            self._update_task("full_creation", "failed", 40, result["error"])
 
         return result

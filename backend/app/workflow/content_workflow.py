@@ -45,6 +45,6 @@ class ContentAnalysisWorkflow(BaseWorkflow):
 
         except Exception as e:
             result["error"] = f"内容分析失败: {str(e)}"
-            self._update_task("full_creation", "failed", 0, result["error"])
+            self._update_task("full_creation", "failed", 10, result["error"])
 
         return result

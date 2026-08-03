@@ -35,6 +35,7 @@ export interface TaskStatus {
   status: string
   progress: number
   current_step?: string
+  error_message?: string
 }
 
 export function createProject(source_type: string, topic: string, category?: string) {

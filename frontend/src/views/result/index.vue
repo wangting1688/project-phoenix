@@ -7,7 +7,16 @@
 
     <div class="page-container">
       <!-- 进度展示 -->
-      <div v-if="!completed" class="progress-card card">
+      <div v-if="failed" class="progress-card card">
+        <el-alert type="error" :closable="false" show-icon title="创作未完成">
+          <div class="fail-reason">{{ failReason }}</div>
+        </el-alert>
+        <div class="fail-actions">
+          <el-button type="primary" @click="router.push('/creation')">重新创作</el-button>
+        </div>
+      </div>
+
+      <div v-else-if="!completed" class="progress-card card">
         <div class="progress-header">
           <el-icon class="loading-icon" :size="24"><ILoading /></el-icon>
           <span>AI正在创作中...</span>
@@ -344,6 +353,10 @@ const workflowSteps = [
 
 const taskProgress = computed(() => taskStatus.value?.progress || 0)
 const completed = computed(() => taskStatus.value?.status === 'completed')
+const failed = computed(() => taskStatus.value?.status === 'failed')
+const failReason = computed(
+  () => taskStatus.value?.error_message || '创作流程执行失败，请稍后重试'
+)
 const progressColor = computed(() => {
   if (completed.value) return '#67c23a'
   return '#667eea'
@@ -383,6 +396,10 @@ async function pollStatus() {
 
     if (status?.status === 'completed') {
       loadOperationData()
+      return
+    }
+    // 失败时必须停止轮询, 否则页面永远停在"AI正在创作中"
+    if (status?.status === 'failed') {
       return
     }
 
@@ -558,6 +575,8 @@ function goPublish() {
 .page-container { padding: 0 16px; max-width: 768px; margin: -30px auto 0; }
 
 .progress-card { margin-bottom: 16px; }
+.fail-reason { line-height: 1.6; word-break: break-all; }
+.fail-actions { margin-top: 12px; text-align: right; }
 .progress-header {
   display: flex; align-items: center; gap: 8px;
   margin-bottom: 16px; font-size: 16px; color: #303133;

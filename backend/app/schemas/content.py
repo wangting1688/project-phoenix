@@ -54,6 +54,7 @@ class TaskStatusResponse(BaseModel):
     status: str
     progress: int
     current_step: Optional[str] = None
+    error_message: Optional[str] = None
 
 
 class TaskResultResponse(BaseModel):

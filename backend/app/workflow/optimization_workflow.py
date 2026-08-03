@@ -32,6 +32,6 @@ class OptimizationWorkflow(BaseWorkflow):
 
         except Exception as e:
             result["error"] = f"运营优化失败: {str(e)}"
-            self._update_task("full_creation", "failed", 0, result["error"])
+            self._update_task("full_creation", "failed", 95, result["error"])
 
         return result

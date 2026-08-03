@@ -3,7 +3,7 @@ import json
 
 from app.workflow.base import BaseWorkflow
 from app.experts.ai_expert import AIExpertService
-from app.models import Review
+from app.models import Review, Script
 
 
 class ReviewWorkflow(BaseWorkflow):
@@ -30,6 +30,16 @@ class ReviewWorkflow(BaseWorkflow):
 
             ai_result = self.ai_service.compliance_expert(combined_script)
 
+            # 首轮不通过时, 用 AI 给出的合规改写稿复审一次, 通过则改写入库继续流程
+            if not ai_result.get("pass"):
+                fixed = (ai_result.get("modified_text") or "").strip()
+                if fixed:
+                    recheck = self.ai_service.compliance_expert(fixed)
+                    if recheck.get("pass"):
+                        self._apply_compliant_rewrite(fixed)
+                        ai_result = recheck
+                        ai_result["auto_fixed"] = True
+
             review = Review(
                 project_id=self.project_id,
                 original_score=script.get("score", {}).get("total"),
@@ -42,8 +52,9 @@ class ReviewWorkflow(BaseWorkflow):
             self.db.commit()
 
             if not ai_result.get("pass"):
-                result["error"] = f"审核未通过: {ai_result.get('problems', [])}"
-                self._update_task("full_creation", "failed", 0, result["error"])
+                problems = ai_result.get("problems") or ["未给出具体原因"]
+                result["error"] = "合规审核未通过: " + "; ".join(str(x) for x in problems)
+                self._update_task("full_creation", "failed", 65, result["error"])
                 return result
 
             self._update_task("full_creation", "running", 80, json.dumps(ai_result, ensure_ascii=False))
@@ -53,6 +64,15 @@ class ReviewWorkflow(BaseWorkflow):
 
         except Exception as e:
             result["error"] = f"审核失败: {str(e)}"
-            self._update_task("full_creation", "failed", 0, result["error"])
+            self._update_task("full_creation", "failed", 65, result["error"])
 
         return result
+
+    def _apply_compliant_rewrite(self, fixed_text: str):
+        """把合规改写稿写回文案, 避免违规内容留在库里"""
+        scripts = self.db.query(Script).filter(
+            Script.project_id == self.project_id
+        ).order_by(Script.id).all()
+        if scripts:
+            scripts[0].content = fixed_text
+            self.db.commit()

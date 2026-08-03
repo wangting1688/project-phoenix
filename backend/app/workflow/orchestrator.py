@@ -218,8 +218,8 @@ class WorkflowOrchestrator:
         ).first()
         if task:
             task.status = "failed"
-            task.progress = 0
             task.result = error
+            task.error_message = error
             self.db.commit()
 
     def _build_error_result(self, step_result: Dict[str, Any]) -> Dict[str, Any]:
