@@ -42,7 +42,10 @@ export function createProject(source_type: string, topic: string, category?: str
 }
 
 export function listProjects(page = 1, size = 20) {
-  return request.get('/creation/projects', { params: { page, size } })
+  return request.get<unknown, { items: ContentProject[]; total: number; page: number; size: number }>(
+    '/creation/projects',
+    { params: { page, size } }
+  )
 }
 
 export function getProject(project_id: number) {

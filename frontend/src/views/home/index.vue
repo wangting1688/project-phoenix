@@ -15,71 +15,62 @@
     </div>
 
     <div class="page-container">
-      <div class="quick-actions">
-        <div class="card action-card highlight" @click="goToContentHub">
-          <div class="action-icon content-hub">
-            <el-icon :size="32"><ISparkles /></el-icon>
-          </div>
-          <div class="action-info">
-            <h3>☀️ AI内容中心</h3>
-            <p>今天适合创作什么？AI为你推荐</p>
-          </div>
-          <el-icon :size="20" class="arrow"><IArrowRight /></el-icon>
+      <!-- 5 步主线: 每步显示真实完成状态 -->
+      <div class="pipeline">
+        <div class="pipeline-head">
+          <h3>创作流水线</h3>
+          <span class="pipeline-sub">按顺序走完 5 步，产出一条可发布的视频</span>
         </div>
 
-        <div class="card action-card" @click="goToCreation('recommend')">
-          <div class="action-icon recommend">
-            <el-icon :size="32"><IFire /></el-icon>
+        <div
+          v-for="(s, i) in pipeline"
+          :key="s.key"
+          class="pipeline-step card"
+          :class="{ done: s.done, current: currentStepIndex === i }"
+          @click="router.push(s.path)"
+        >
+          <div class="step-no" :class="{ done: s.done }">
+            <el-icon v-if="s.done" :size="16"><ICheck /></el-icon>
+            <span v-else>{{ i + 1 }}</span>
           </div>
-          <div class="action-info">
-            <h3>AI推荐内容</h3>
-            <p>根据热点和你的喜好推荐</p>
+          <div class="step-body">
+            <div class="step-title-row">
+              <h4>{{ s.title }}</h4>
+              <span class="step-stat" :class="{ ok: s.done }">{{ s.stat }}</span>
+            </div>
+            <p class="step-desc">{{ s.desc }}</p>
           </div>
-          <el-icon :size="20" class="arrow"><IArrowRight /></el-icon>
-        </div>
-
-        <div class="card action-card" @click="goToViralAnalysis">
-          <div class="action-icon viral">
-            <el-icon :size="32"><IVideoPlay /></el-icon>
-          </div>
-          <div class="action-info">
-            <h3>🔍 AI爆款逆向工程</h3>
-            <p>输入链接，AI分析为什么它成功</p>
-          </div>
-          <el-icon :size="20" class="arrow"><IArrowRight /></el-icon>
-        </div>
-
-        <div class="card action-card" @click="goToCreation('custom')">
-          <div class="action-icon custom">
-            <el-icon :size="32"><IEdit /></el-icon>
-          </div>
-          <div class="action-info">
-            <h3>自定义主题</h3>
-            <p>输入你想创作的主题</p>
-          </div>
-          <el-icon :size="20" class="arrow"><IArrowRight /></el-icon>
+          <el-icon :size="18" class="arrow"><IArrowRight /></el-icon>
         </div>
       </div>
 
       <div class="section">
         <div class="section-header">
           <h3>今日推荐</h3>
-          <span class="more" @click="goToCreation('recommend')">查看全部</span>
+          <span class="more" @click="router.push('/content-hub')">查看全部</span>
         </div>
 
-        <div class="recommend-list">
+        <div v-if="loadingRec" class="section-tip">加载中...</div>
+
+        <div v-else-if="!recommendations.length" class="section-empty card">
+          <p>还没有选题推荐</p>
+          <p class="empty-sub">先去「爆款解析」分析同行视频，AI 会在这里给出选题</p>
+          <el-button size="small" type="primary" @click="router.push('/viral-analysis')">
+            去解析爆款
+          </el-button>
+        </div>
+
+        <div v-else class="recommend-list">
           <div
-            v-for="(item, index) in recommendations"
-            :key="index"
+            v-for="item in recommendations"
+            :key="item.id"
             class="card recommend-item"
             @click="selectRecommend(item)"
           >
-            <div class="recommend-level" :class="'level-' + item.level">
-              {{ item.level }}
-            </div>
+            <div class="recommend-level">{{ Math.round(item.final_score) }}</div>
             <div class="recommend-content">
               <h4>{{ item.title }}</h4>
-              <p>{{ item.reason }}</p>
+              <p>{{ item.recommend_reason || item.summary }}</p>
             </div>
             <el-button type="primary" size="small" class="recommend-btn">
               立即创作
@@ -118,70 +109,144 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  IFire,
-  IVideoPlay,
-  IEdit,
   IArrowRight,
   IVideoCamera,
-  ISparkles,
+  ICheck,
 } from '@/utils/icons'
 import { useUserStore } from '@/stores/user'
+import { getRecommendations, type ContentOpportunity } from '@/api/contentHub'
+import { listProjects, type ContentProject } from '@/api/creation'
+import { getVoiceProfiles } from '@/api/voiceProfile'
+import { getPublishTasks } from '@/api/publishTask'
 
 const router = useRouter()
 const userStore = useUserStore()
 
-const recommendations = ref([
+const recommendations = ref<ContentOpportunity[]>([])
+const loadingRec = ref(true)
+const recentWorks = ref<ContentProject[]>([])
+
+// 流水线各步真实状态
+const opportunityCount = ref(0)
+const projectCount = ref(0)
+const completedProjectCount = ref(0)
+const activeVoiceCount = ref(0)
+const publishTaskCount = ref(0)
+
+const pipeline = computed(() => [
   {
-    level: 'A',
-    title: '睡眠成为近期热门话题',
-    reason: '45岁女性对睡眠质量的关注增长明显',
-    topic: '睡眠不好怎么办',
+    key: 'viral',
+    title: '1. 找对标爆款',
+    desc: '粘贴同行视频链接并填写真实数据，AI 拆解成功原因',
+    path: '/viral-analysis',
+    stat: opportunityCount.value ? `已产出 ${opportunityCount.value} 个选题` : '未开始',
+    done: opportunityCount.value > 0,
   },
   {
-    level: 'B',
-    title: '肠道健康咨询潜力高',
-    reason: '最近肠道健康相关内容转化率提升',
-    topic: '肠胃不好怎么调理',
+    key: 'topic',
+    title: '2. 选题与文案',
+    desc: '从 AI 推荐的选题中挑一个，生成口播文案',
+    path: '/content-hub',
+    stat: projectCount.value ? `已建 ${projectCount.value} 个项目` : '未开始',
+    done: projectCount.value > 0,
+  },
+  {
+    key: 'voice',
+    title: '3. 我的声音',
+    desc: '录一段样本克隆你的音色，用于配音',
+    path: '/voice-profile',
+    stat: activeVoiceCount.value ? `${activeVoiceCount.value} 个可用音色` : '未克隆',
+    done: activeVoiceCount.value > 0,
+  },
+  {
+    key: 'produce',
+    title: '4. 生成视频',
+    desc: '用真人素材 + 克隆配音 + 字幕合成竖屏成片',
+    path: '/video-production',
+    stat: completedProjectCount.value ? `${completedProjectCount.value} 条已完成` : '未开始',
+    done: completedProjectCount.value > 0,
+  },
+  {
+    key: 'publish',
+    title: '5. 发布到平台',
+    desc: '绑定平台账号，一键分发并回收数据',
+    path: '/publish-center',
+    stat: publishTaskCount.value ? `${publishTaskCount.value} 个发布任务` : '未开始',
+    done: publishTaskCount.value > 0,
   },
 ])
 
-const recentWorks = ref<Array<{ id: number; topic: string; status: string }>>([])
+// 第一个未完成的步骤即为当前步骤
+const currentStepIndex = computed(() => {
+  const i = pipeline.value.findIndex((s) => !s.done)
+  return i === -1 ? pipeline.value.length - 1 : i
+})
 
 onMounted(() => {
   if (!userStore.userInfo) {
     userStore.fetchUserInfo()
   }
-  loadRecentWorks()
+  loadRecommendations()
+  loadProjects()
+  loadPipelineExtras()
 })
 
-function loadRecentWorks() {
+async function loadRecommendations() {
+  loadingRec.value = true
+  try {
+    const list = (await getRecommendations('E', 20)) || []
+    opportunityCount.value = list.length
+    recommendations.value = list.slice(0, 3)
+  } catch (error) {
+    console.error('加载推荐失败:', error)
+    recommendations.value = []
+  } finally {
+    loadingRec.value = false
+  }
 }
 
-function goToCreation(type: string) {
-  router.push({ path: '/creation', query: { type } })
+async function loadProjects() {
+  try {
+    const res = await listProjects(1, 50)
+    const items = res?.items || []
+    projectCount.value = res?.total ?? items.length
+    completedProjectCount.value = items.filter((p) => p.status === 'completed').length
+    recentWorks.value = items.slice(0, 4)
+  } catch (error) {
+    console.error('加载项目失败:', error)
+    recentWorks.value = []
+  }
 }
 
-function goToContentHub() {
-  router.push('/content-hub')
+async function loadPipelineExtras() {
+  try {
+    const voices = (await getVoiceProfiles()) || []
+    activeVoiceCount.value = voices.filter((v) => v.status === 'active').length
+  } catch (error) {
+    console.error('加载声纹失败:', error)
+  }
+  try {
+    const tasks = await getPublishTasks()
+    publishTaskCount.value = tasks?.total || 0
+  } catch (error) {
+    console.error('加载发布任务失败:', error)
+  }
 }
 
-function goToViralAnalysis() {
-  router.push('/viral-analysis')
-}
-
-function selectRecommend(item: { topic: string }) {
+function selectRecommend(item: ContentOpportunity) {
   router.push({
     path: '/creation',
-    query: { type: 'recommend', topic: item.topic },
+    query: { type: 'recommend', topic: item.title },
   })
 }
 
 function getStatusText(status: string) {
   const map: Record<string, string> = {
     draft: '草稿',
+    ready: '待生成',
     processing: '生成中',
     completed: '已完成',
     failed: '失败',
@@ -226,67 +291,125 @@ function getStatusText(status: string) {
   margin: -40px auto 0;
 }
 
-.quick-actions {
+.pipeline {
   margin-bottom: 20px;
 }
 
-.action-card {
+.pipeline-head {
+  margin-bottom: 12px;
+}
+
+.pipeline-head h3 {
+  font-size: 17px;
+  color: #303133;
+  margin: 0 0 4px;
+}
+
+.pipeline-sub {
+  font-size: 13px;
+  color: #909399;
+}
+
+.pipeline-step {
   display: flex;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
   cursor: pointer;
   transition: transform 0.2s;
+  border-left: 3px solid transparent;
 }
 
-.action-card:active {
-  transform: scale(0.98);
+.pipeline-step:active {
+  transform: scale(0.99);
 }
 
-.action-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
+.pipeline-step.current {
+  border-left-color: #667eea;
+  background: linear-gradient(135deg, #f5f7ff, #fff);
+}
+
+.step-no {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-right: 16px;
+  margin-right: 14px;
+  flex-shrink: 0;
+  font-size: 14px;
+  font-weight: 600;
+  background: #f0f2f5;
+  color: #909399;
+}
+
+.step-no.done {
+  background: #67c23a;
   color: #fff;
 }
 
-.action-icon.recommend {
-  background: linear-gradient(135deg, #ff6b6b, #feca57);
-}
-
-.action-icon.viral {
-  background: linear-gradient(135deg, #5f27cd, #341f97);
-}
-
-.action-icon.custom {
-  background: linear-gradient(135deg, #00d2d3, #01a3a4);
-}
-
-.action-icon.content-hub {
-  background: linear-gradient(135deg, #f093fb, #f5576c);
-}
-
-.action-card.highlight {
-  border: 2px solid #f5576c;
-  background: linear-gradient(135deg, #fff5f5, #fff);
-}
-
-.action-info {
+.step-body {
   flex: 1;
+  min-width: 0;
 }
 
-.action-info h3 {
-  font-size: 16px;
-  margin-bottom: 4px;
+.step-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+
+.step-title-row h4 {
+  font-size: 15px;
   color: #303133;
+  margin: 0;
 }
 
-.action-info p {
-  font-size: 13px;
+.step-stat {
+  font-size: 12px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: #f4f4f5;
   color: #909399;
+  white-space: nowrap;
+}
+
+.step-stat.ok {
+  background: #f0f9eb;
+  color: #67c23a;
+}
+
+.step-desc {
+  font-size: 12px;
+  color: #909399;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.section-tip {
+  padding: 18px;
+  text-align: center;
+  color: #909399;
+  font-size: 13px;
+}
+
+.section-empty {
+  padding: 22px;
+  text-align: center;
+}
+
+.section-empty p {
+  margin: 0 0 6px;
+  font-size: 14px;
+  color: #606266;
+}
+
+.section-empty .empty-sub {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 12px;
+  line-height: 1.6;
 }
 
 .arrow {
@@ -324,25 +447,18 @@ function getStatusText(status: string) {
 }
 
 .recommend-level {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+  min-width: 38px;
+  height: 30px;
+  padding: 0 7px;
+  border-radius: 15px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: bold;
-  font-size: 16px;
+  font-size: 14px;
   margin-right: 12px;
   flex-shrink: 0;
-}
-
-.level-A {
-  background: linear-gradient(135deg, #ff6b6b, #feca57);
-  color: #fff;
-}
-
-.level-B {
-  background: linear-gradient(135deg, #5f27cd, #a29bfe);
+  background: linear-gradient(135deg, #667eea, #764ba2);
   color: #fff;
 }
 

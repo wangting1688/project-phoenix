@@ -1,7 +1,7 @@
 import request from '@/utils/request'
 
 export function getPublishTasks(params?: { status?: string; platform?: string }) {
-  return request.get('/publish-tasks', { params })
+  return request.get<unknown, { items: unknown[]; total: number }>('/publish-tasks', { params })
 }
 
 export function createPublishTask(data: {

@@ -18,7 +18,7 @@ export interface VoiceProfile {
 }
 
 export function getVoiceProfiles() {
-  return request.get('/voice-profiles')
+  return request.get<unknown, VoiceProfile[]>('/voice-profiles')
 }
 
 export function getVoiceProfile(id: number) {
