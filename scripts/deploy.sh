@@ -84,6 +84,20 @@ deploy_backend() {
   ( cd "$PROJECT_DIR/backend" && tar czf - "${EXCLUDES[@]}" . ) 2>/dev/null \
     | $SSH "tar xzf - -C $REMOTE_ROOT/backend" \
     || die "后端上传失败"
+
+  # tar 只覆盖不删除, 本地删掉的文件会残留在线上 (死代码/旧模块继续被 import)
+  # 故按 app/ 下文件清单比对, 清除线上多余文件
+  local local_list remote_list stale
+  local_list=$(cd "$PROJECT_DIR/backend" && find app -type f -name '*.py' -o -type f -name '*.txt' | sort)
+  remote_list=$($SSH "cd $REMOTE_ROOT/backend && find app -type f \( -name '*.py' -o -name '*.txt' \) | sort")
+  stale=$(comm -13 <(printf '%s\n' "$local_list") <(printf '%s\n' "$remote_list"))
+  if [ -n "$stale" ]; then
+    while IFS= read -r f; do
+      [ -z "$f" ] && continue
+      $SSH "rm -f '$REMOTE_ROOT/backend/$f'" < /dev/null
+      echo "  清除线上残留: $f"
+    done <<< "$stale"
+  fi
   c_ok "后端代码已上传"
 
   c_info "同步依赖 + 数据库迁移..."
