@@ -4,7 +4,6 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.api import api_router
-from app.services.scheduler_service import get_growth_scheduler
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -25,21 +24,6 @@ app.include_router(api_router)
 # 视频合成方案预览: 暴露 storage 目录给前端 <video src="/static/footage/..."/>
 # 仅本地开发/演示用, 生产应改用对象存储 + 签名 URL
 app.mount("/static", StaticFiles(directory="storage"), name="static")
-
-
-@app.on_event("startup")
-def startup_event():
-    """应用启动时初始化"""
-    # 启动增长定时调度器
-    scheduler = get_growth_scheduler()
-    scheduler.start()
-
-
-@app.on_event("shutdown")
-def shutdown_event():
-    """应用关闭时清理"""
-    scheduler = get_growth_scheduler()
-    scheduler.stop()
 
 
 @app.get("/")

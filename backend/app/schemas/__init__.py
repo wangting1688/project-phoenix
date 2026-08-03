@@ -25,19 +25,6 @@ from app.schemas.content import (
     TaskStatusResponse,
     TaskResultResponse,
 )
-from app.schemas.platform_account import (
-    PlatformAccountCreate,
-    PlatformAccountUpdate,
-    PlatformAccountResponse,
-    PlatformAccountListResponse,
-)
-from app.schemas.publish_task import (
-    PublishTaskCreate,
-    PublishTaskUpdate,
-    PublishTaskResponse,
-    PublishTaskListResponse,
-    PublishTaskMetrics,
-)
 
 __all__ = [
     "UserBase",
@@ -63,13 +50,4 @@ __all__ = [
     "VideoResponse",
     "TaskStatusResponse",
     "TaskResultResponse",
-    "PlatformAccountCreate",
-    "PlatformAccountUpdate",
-    "PlatformAccountResponse",
-    "PlatformAccountListResponse",
-    "PublishTaskCreate",
-    "PublishTaskUpdate",
-    "PublishTaskResponse",
-    "PublishTaskListResponse",
-    "PublishTaskMetrics",
 ]

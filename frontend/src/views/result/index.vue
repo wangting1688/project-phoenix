@@ -242,7 +242,13 @@
             >
               {{ renderedVideo ? '重新渲染' : '渲染最终视频' }}
             </el-button>
-            <el-button @click="goPublish">发布方案</el-button>
+            <el-button
+              type="primary"
+              :disabled="!renderedVideo"
+              @click="downloadVideo"
+            >
+              下载视频
+            </el-button>
           </div>
         </div>
       </div>
@@ -525,11 +531,17 @@ function getQualityColor(score: number) {
 }
 
 function downloadVideo() {
-  if (!composition.value) {
-    ElMessage.info('请先生成视频方案')
+  if (!renderedSrc.value) {
+    ElMessage.warning('请先点击「渲染最终视频」生成成片')
     return
   }
-  ElMessage.info('V1版本：FFmpeg命令已生成，可在后端执行合成')
+  const a = document.createElement('a')
+  a.href = renderedSrc.value
+  a.download = `${project.value?.topic || 'video'}.mp4`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  ElMessage.success('已开始下载，可保存后上传到抖音/视频号等平台')
 }
 
 function goRenderVideo() {
@@ -557,9 +569,6 @@ function goRenderVideo() {
     })
 }
 
-function goPublish() {
-  ElMessage.info('发布功能开发中')
-}
 </script>
 
 <style scoped>

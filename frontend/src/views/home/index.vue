@@ -120,7 +120,6 @@ import { useUserStore } from '@/stores/user'
 import { getRecommendations, type ContentOpportunity } from '@/api/contentHub'
 import { listProjects, type ContentProject } from '@/api/creation'
 import { getVoiceProfiles } from '@/api/voiceProfile'
-import { getPublishTasks } from '@/api/publishTask'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -134,7 +133,6 @@ const opportunityCount = ref(0)
 const projectCount = ref(0)
 const completedProjectCount = ref(0)
 const activeVoiceCount = ref(0)
-const publishTaskCount = ref(0)
 
 const pipeline = computed(() => [
   {
@@ -170,12 +168,12 @@ const pipeline = computed(() => [
     done: completedProjectCount.value > 0,
   },
   {
-    key: 'publish',
-    title: '5. 发布到平台',
-    desc: '绑定平台账号，一键分发并回收数据',
-    path: '/publish-center',
-    stat: publishTaskCount.value ? `${publishTaskCount.value} 个发布任务` : '未开始',
-    done: publishTaskCount.value > 0,
+    key: 'download',
+    title: '5. 下载并发布',
+    desc: '下载竖屏成片，自己上传到抖音/视频号等平台',
+    path: '/works',
+    stat: completedProjectCount.value ? `${completedProjectCount.value} 条可下载` : '未开始',
+    done: false,
   },
 ])
 
@@ -227,12 +225,6 @@ async function loadPipelineExtras() {
     activeVoiceCount.value = voices.filter((v) => v.status === 'active').length
   } catch (error) {
     console.error('加载声纹失败:', error)
-  }
-  try {
-    const tasks = await getPublishTasks()
-    publishTaskCount.value = tasks?.total || 0
-  } catch (error) {
-    console.error('加载发布任务失败:', error)
   }
 }
 

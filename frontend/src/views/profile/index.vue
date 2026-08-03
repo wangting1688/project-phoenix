@@ -137,25 +137,6 @@
           </div>
         </div>
 
-        <!-- 发布相关: 所有登录用户可用 -->
-        <div class="menu-card card">
-          <div class="menu-item" @click="$router.push('/publish-center')">
-            <div class="menu-left">
-              <el-icon :size="20" class="menu-icon blue"><IPromotion /></el-icon>
-              <span>发布中心</span>
-            </div>
-            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
-          </div>
-          <div class="menu-divider"></div>
-          <div class="menu-item" @click="$router.push('/platform-account')">
-            <div class="menu-left">
-              <el-icon :size="20" class="menu-icon green"><IConnection /></el-icon>
-              <span>平台账号</span>
-            </div>
-            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
-          </div>
-        </div>
-
         <!-- 总部管理员：用户管理 -->
         <div v-if="isSuperAdmin" class="menu-card card">
           <div class="menu-item" @click="$router.push('/user-manage')">
@@ -193,8 +174,6 @@ import {
   ISetting,
   IHelp,
   IOffice,
-  IPromotion,
-  IConnection,
   IPicture,
   ISparkles,
   IScissors,
