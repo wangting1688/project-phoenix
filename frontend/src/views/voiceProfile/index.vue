@@ -297,9 +297,10 @@ async function loadProfiles() {
 async function loadScripts() {
   try {
     const res = await getSampleScripts()
-    scripts.value = res.data || []
+    scripts.value = Array.isArray(res) ? res : (res.data || [])
     currentScript.value = scripts.value[0] || null
-  } catch {
+  } catch (e) {
+    console.error('加载脚本失败:', e)
     scripts.value = []
   }
 }
