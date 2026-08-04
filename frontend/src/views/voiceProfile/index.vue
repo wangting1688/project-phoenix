@@ -24,7 +24,10 @@
             {{ s.title }}
           </div>
         </div>
-        <div class="script-text">{{ currentScript?.text }}</div>
+        <div class="script-hint">请照着下面的文字朗读：</div>
+        <div class="script-text">
+          {{ currentScript?.text || '脚本加载中...' }}
+        </div>
       </div>
 
       <!-- 步骤 2: 录音 -->
@@ -416,9 +419,14 @@ onUnmounted(() => {
 }
 .script-tab.active { background: #409eff; color: #fff; }
 .script-text {
-  font-size: 16px; line-height: 1.9; color: #303133;
-  background: #fafafa; padding: 14px; border-radius: 8px;
-  letter-spacing: .5px;
+  font-size: 17px; line-height: 2; color: #303133;
+  background: linear-gradient(135deg, #f5f7fa 0%, #e4e8eb 100%);
+  padding: 20px; border-radius: 12px; letter-spacing: 1px;
+  min-height: 120px; font-weight: 500; border: 2px solid #409eff20;
+}
+.script-hint {
+  font-size: 14px; color: #409eff; margin-bottom: 10px; padding-left: 4px;
+  font-weight: 500;
 }
 
 .record-tips {

@@ -296,7 +296,7 @@ import {
   ICheck, IDocument, IVideoPlay, ISetting,
 } from '@/utils/icons'
 import {
-  getTaskStatus, getTaskResult, getTaskScripts,
+  getTaskStatus, getTaskResult, getTaskScripts, getProject,
   type TaskStatus, type Script, type VideoInfo,
 } from '@/api/creation'
 import { composeVideo, renderVideo, type ComposeResult } from '@/api/video'
@@ -305,7 +305,8 @@ import { getVoiceProfiles, type VoiceProfile } from '@/api/voiceProfile'
 const route = useRoute()
 const router = useRouter()
 
-const taskId = Number(route.query.task_id)
+const taskId = Number(route.query.task_id || 0)
+const projectIdQuery = Number(route.query.project_id || 0)
 const projectId = ref<number | null>(null)
 const taskStatus = ref<TaskStatus | null>(null)
 const scripts = ref<Script[]>([])
@@ -368,9 +369,24 @@ const progressColor = computed(() => {
   return '#667eea'
 })
 
-onMounted(() => {
+onMounted(async () => {
   if (taskId) {
     pollStatus()
+  } else if (projectIdQuery) {
+    // 从作品列表跳过来的，直接加载项目视频
+    try {
+      const project = await getProject(projectIdQuery)
+      projectId.value = projectIdQuery
+      if (project?.data?.video_url) {
+        renderedVideo.value = {
+          video_id: project.data.id,
+          output_url: project.data.video_url,
+          duration: project.data.video_duration
+        }
+      }
+    } catch (e) {
+      console.error('加载项目失败:', e)
+    }
   }
   loadVoiceProfiles()
 })

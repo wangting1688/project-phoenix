@@ -5,7 +5,7 @@ import threading
 
 from app.core.database import get_db
 from app.api.deps import get_current_user
-from app.models import User, ContentProject, WorkflowTask
+from app.models import User, ContentProject, WorkflowTask, Video
 from app.workflow.orchestrator import WorkflowOrchestrator
 from app.services import tenant_service
 from app.schemas import (
@@ -81,15 +81,28 @@ def list_projects(
 ):
     query = db.query(ContentProject).filter(ContentProject.user_id == current_user.id)
     total = query.count()
+    project_ids = []
     projects = (
         query.order_by(ContentProject.created_at.desc())
         .offset((page - 1) * size)
         .limit(size)
         .all()
     )
+    project_ids = [p.id for p in projects]
+    videos = {}
+    if project_ids:
+        for v in db.query(Video).filter(Video.project_id.in_(project_ids)).all():
+            videos[v.project_id] = v
     return ApiResponse(
         data={
-            "items": [ContentProjectResponse.model_validate(p) for p in projects],
+            "items": [
+                {
+                    **ContentProjectResponse.model_validate(p).model_dump(),
+                    "video_url": v.url if (v := videos.get(p.id)) else None,
+                    "video_duration": v.duration if (v := videos.get(p.id)) else None,
+                }
+                for p in projects
+            ],
             "total": total,
             "page": page,
             "size": size,

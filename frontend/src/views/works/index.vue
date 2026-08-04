@@ -51,6 +51,15 @@
                 {{ getStatusText(work.status) }}
               </span>
               <span class="date">{{ formatDate(work.created_at) }}</span>
+              <a
+                v-if="work.status === 'completed' && work.video_url"
+                :href="work.video_url"
+                target="_blank"
+                class="download-btn"
+                @click.stop
+              >
+                下载
+              </a>
             </div>
           </div>
         </div>
@@ -68,13 +77,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   IVideoCamera,
   IVideoPlay,
   ILoading,
 } from '@/utils/icons'
+import { getProjects } from '@/api/creation'
 
 const router = useRouter()
 
@@ -92,6 +102,8 @@ const works = ref<Array<{
   topic: string
   status: string
   created_at: string
+  video_url: string | null
+  video_duration: number | null
 }>>([])
 
 const filteredWorks = computed(() => {
@@ -116,8 +128,16 @@ function formatDate(dateStr: string) {
 }
 
 function viewWork(work: { id: number }) {
-  console.log('查看作品:', work.id)
+  router.push(`/result?project_id=${work.id}`)
 }
+onMounted(async () => {
+  try {
+    const res = await getProjects()
+    works.value = res.data?.items || []
+  } catch (e) {
+    console.error('加载作品失败:', e)
+  }
+})
 </script>
 
 <style scoped>
@@ -305,5 +325,14 @@ function viewWork(work: { id: number }) {
   border-radius: 12px;
   padding: 60px 20px;
   text-align: center;
+}
+.download-btn {
+  color: #667eea;
+  text-decoration: none;
+  font-size: 13px;
+  margin-left: 8px;
+}
+.download-btn:hover {
+  text-decoration: underline;
 }
 </style>

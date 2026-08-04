@@ -49,6 +49,10 @@ export function listProjects(page = 1, size = 20) {
   )
 }
 
+export function getProjects(page = 1, size = 50) {
+  return request.get(`/creation/projects`, { params: { page, size } })
+}
+
 export function getProject(project_id: number) {
   return request.get(`/creation/projects/${project_id}`)
 }
