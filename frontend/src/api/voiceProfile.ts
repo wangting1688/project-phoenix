@@ -26,9 +26,7 @@ export function getVoiceProfile(id: number) {
 }
 
 export function uploadVoiceSample(data: FormData) {
-  return request.post('/voice-profiles', data, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })
+  return request.post('/voice-profiles', data)
 }
 
 export function trainVoiceProfile(id: number) {

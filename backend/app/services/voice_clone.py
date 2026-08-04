@@ -335,8 +335,13 @@ def upload_sample(db, user_id, file_bytes, filename, name, demo_text, language=0
     if _is_volc_configured():
         try:
             return train_voice(db, profile.id, user_id)
-        except Exception:
-            # 训练失败保留 training, 不阻塞上传
+        except Exception as e:
+            # 训练失败标记为 failed, 不阻塞上传
+            profile.status = "failed"
+            profile.volc_status = 3
+            profile.error_message = f"训练调用失败: {str(e)[:200]}"
+            db.commit()
+            db.refresh(profile)
             return profile
     return profile
 
@@ -393,6 +398,9 @@ def train_voice(db, profile_id, user_id):
             profile.error_message = "朗读内容与示例文本差异过大, 请照着屏幕上的文字逐字朗读后重试"
         else:
             profile.error_message = msg or "训练失败"
+        # 业务错误标记为 failed
+        profile.status = "failed"
+        profile.volc_status = 3
     else:
         profile.error_message = None
 
