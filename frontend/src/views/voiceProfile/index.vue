@@ -288,7 +288,7 @@ function blobExt(blob: Blob) {
 async function loadProfiles() {
   try {
     const res = await getVoiceProfiles()
-    profiles.value = res.data || []
+    profiles.value = res || []
   } catch {
     profiles.value = []
   }
@@ -322,7 +322,7 @@ async function handleSubmit() {
   submitting.value = true
   try {
     const res = await uploadVoiceSample(fd)
-    const p = res.data
+    const p = res
     if (p.status === 'active') {
       ElMessage.success('训练成功！现在可以用你的声音配音了')
     } else if (p.status === 'failed') {

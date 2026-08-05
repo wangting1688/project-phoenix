@@ -377,11 +377,11 @@ onMounted(async () => {
     try {
       const project = await getProject(projectIdQuery)
       projectId.value = projectIdQuery
-      if (project?.data?.video_url) {
+      if (project?.video_url) {
         renderedVideo.value = {
-          video_id: project.data.id,
-          output_url: project.data.video_url,
-          duration: project.data.video_duration
+          video_id: project.id,
+          output_url: project.video_url,
+          duration: project.video_duration
         }
       }
     } catch (e) {
@@ -394,7 +394,7 @@ onMounted(async () => {
 async function loadVoiceProfiles() {
   try {
     const res = await getVoiceProfiles()
-    voiceProfiles.value = res.data || []
+    voiceProfiles.value = res || []
   } catch {
     voiceProfiles.value = []
   }

@@ -25,9 +25,9 @@
         </div>
       </div>
 
-      <div v-if="works.length > 0" class="works-grid">
+      <div v-if="filteredWorks.length > 0" class="works-grid">
         <div
-          v-for="work in works"
+          v-for="work in filteredWorks"
           :key="work.id"
           class="work-card card"
           @click="viewWork(work)"
@@ -135,7 +135,7 @@ function viewWork(work: { id: number }) {
 onMounted(async () => {
   try {
     const res = await getProjects()
-    works.value = res.data?.items || []
+    works.value = res.items || []
   } catch (e) {
     console.error('加载作品失败:', e)
   }
