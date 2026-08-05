@@ -150,7 +150,7 @@ def render_video(
         tts_audio_path: 已生成好的 TTS mp3 路径 (跳过生成步骤)
     """
     storage_root = Path(storage_root)
-    # 输出固定走 storage/output/ (与 main.py 的 StaticFiles mount="/static" 对应)
+    # 输出固定走 storage/output/ (与 main.py 的 /static 鉴权路由对应)
     output_dir = storage_root / "storage" / "output"
     output_dir.mkdir(parents=True, exist_ok=True)
 

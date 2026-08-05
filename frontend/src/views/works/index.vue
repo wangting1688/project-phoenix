@@ -53,7 +53,7 @@
               <span class="date">{{ formatDate(work.created_at) }}</span>
               <a
                 v-if="work.status === 'completed' && work.video_url"
-                :href="work.video_url"
+                :href="`${work.video_url}?token=${encodeURIComponent(userStore.token)}`"
                 target="_blank"
                 class="download-btn"
                 @click.stop
@@ -85,8 +85,10 @@ import {
   ILoading,
 } from '@/utils/icons'
 import { getProjects } from '@/api/creation'
+import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
+const userStore = useUserStore()
 
 const activeTab = ref('all')
 
