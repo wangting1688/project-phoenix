@@ -301,9 +301,11 @@ import {
 } from '@/api/creation'
 import { composeVideo, renderVideo, type ComposeResult } from '@/api/video'
 import { getVoiceProfiles, type VoiceProfile } from '@/api/voiceProfile'
+import { useUserStore } from '@/stores/user'
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 
 const taskId = Number(route.query.task_id || 0)
 const projectIdQuery = Number(route.query.project_id || 0)
@@ -319,7 +321,12 @@ const voiceProfiles = ref<VoiceProfile[]>([])
 const selectedVoiceId = ref<number | null>(null)
 const activeVoices = computed(() => voiceProfiles.value.filter((v) => v.status === 'active'))
 const renderedVideo = ref<{ video_id: number; output_url: string; duration: number } | null>(null)
-const renderedSrc = computed(() => renderedVideo.value ? `/static/output/${renderedVideo.value.output_url.split('/').pop()}` : null)
+const renderedSrc = computed(() => {
+  if (!renderedVideo.value) return null
+  const url = renderedVideo.value.output_url
+  const base = url.startsWith('/static/') ? url : `/static/output/${url.split('/').pop()}`
+  return `${base}?token=${encodeURIComponent(userStore.token)}`
+})
 const composing = ref(false)
 const editingScript = ref<number | null>(null)
 
@@ -327,10 +334,9 @@ const previewSrc = computed(() => {
   if (!composition.value) return null
   const scene = composition.value.plan?.scene_plan?.[0]
   if (!scene?.footage_path) return null
-  // 后端 StaticFiles mount /static -> storage, 取文件名后挂 /static/footage/{user_id}/{filename}
   const m = scene.footage_path.match(/footage\/(\d+)\/([^/]+)$/)
   if (!m) return null
-  return `/static/footage/${m[1]}/${m[2]}`
+  return `/static/footage/${m[1]}/${m[2]}?token=${encodeURIComponent(userStore.token)}`
 })
 const editContent = ref('')
 const savingScript = ref(false)

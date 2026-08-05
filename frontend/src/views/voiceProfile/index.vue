@@ -126,7 +126,8 @@
           <el-button size="small" :loading="testingId === p.id" @click="handleTest(p)">试听</el-button>
           <el-button size="small" type="danger" plain @click="handleDelete(p)">删除</el-button>
         </div>
-        <audio v-if="demoUrls[p.id]" :src="demoUrls[p.id]" controls class="voice-audio" />
+        <audio v-if="demoUrls[p.id]" :src="addTokenToUrl(demoUrls[p.id])" controls class="voice-audio" />
+        <audio v-else-if="p.status === 'active' && p.demo_audio_url" :src="addTokenToUrl(p.demo_audio_url)" controls class="voice-audio" />
       </div>
 
       <div class="switch-view">
@@ -137,8 +138,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useUserStore } from '@/stores/user'
 import { IArrowLeft, IMicrophone, IVideoPause } from '@/utils/icons'
 import {
   getVoiceProfiles,
@@ -151,6 +153,7 @@ import {
   type SampleScript,
 } from '@/api/voiceProfile'
 
+const userStore = useUserStore()
 const profiles = ref<VoiceProfile[]>([])
 const scripts = ref<SampleScript[]>([])
 const currentScript = ref<SampleScript | null>(null)
@@ -283,6 +286,12 @@ function blobExt(blob: Blob) {
   if (blob.type.includes('webm')) return 'webm'
   if (blob.type.includes('ogg')) return 'ogg'
   return 'webm'
+}
+
+function addTokenToUrl(url: string) {
+  if (!url) return ''
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${encodeURIComponent(userStore.token)}`
 }
 
 async function loadProfiles() {
