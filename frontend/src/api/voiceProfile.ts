@@ -22,15 +22,15 @@ export function getVoiceProfiles() {
 }
 
 export function getVoiceProfile(id: number) {
-  return request.get(`/voice-profiles/${id}`)
+  return request.get<unknown, VoiceProfile>(`/voice-profiles/${id}`)
 }
 
 export function uploadVoiceSample(data: FormData) {
-  return request.post('/voice-profiles', data)
+  return request.post<unknown, VoiceProfile>('/voice-profiles', data)
 }
 
 export function trainVoiceProfile(id: number) {
-  return request.post(`/voice-profiles/${id}/train`)
+  return request.post<unknown, VoiceProfile>(`/voice-profiles/${id}/train`)
 }
 
 export function testVoiceProfile(id: number, text?: string) {
@@ -40,7 +40,7 @@ export function testVoiceProfile(id: number, text?: string) {
 }
 
 export function deleteVoiceProfile(id: number) {
-  return request.delete(`/voice-profiles/${id}`)
+  return request.delete<unknown, { profile_id: number; status: string }>(`/voice-profiles/${id}`)
 }
 
 export interface SampleScript {
@@ -50,5 +50,5 @@ export interface SampleScript {
 }
 
 export function getSampleScripts() {
-  return request.get('/voice-profiles/sample-scripts')
+  return request.get<unknown, SampleScript[]>('/voice-profiles/sample-scripts')
 }

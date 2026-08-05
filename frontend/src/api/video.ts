@@ -99,11 +99,11 @@ export interface VideoPlanInfo {
 
 export function composeVideo(projectId: number, scriptId?: number) {
   const params = scriptId ? { script_id: scriptId } : {}
-  return request.post(`/video/compose/${projectId}`, null, { params })
+  return request.post<unknown, ComposeResult>(`/video/compose/${projectId}`, null, { params })
 }
 
 export function getVideoPlan(projectId: number) {
-  return request.get(`/video/plan/${projectId}`)
+  return request.get<unknown, VideoPlanInfo>(`/video/plan/${projectId}`)
 }
 
 export interface RenderResult {
@@ -114,7 +114,7 @@ export interface RenderResult {
 }
 
 export function renderVideo(projectId: number, plan: CompositionPlan, scriptText = "", withTts = true, voiceProfileId?: number) {
-  return request.post<any, { data: RenderResult }>(`/video/render/${projectId}`, {
+  return request.post<unknown, RenderResult>(`/video/render/${projectId}`, {
     plan, script_text: scriptText, with_tts: withTts, voice_profile_id: voiceProfileId ?? null,
   })
 }

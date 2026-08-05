@@ -1,5 +1,13 @@
 import request from '@/utils/request'
 
+
+export interface PaginatedResponse<T> {
+  items: T[]
+  total: number
+  page: number
+  size: number
+}
+
 export interface ContentProject {
   id: number
   user_id: number
@@ -39,40 +47,40 @@ export interface TaskStatus {
 }
 
 export function createProject(source_type: string, topic: string, category?: string) {
-  return request.post('/creation/projects', { source_type, topic, category })
+  return request.post<unknown, { project_id: number; task_id: number; status: string }>('/creation/projects', { source_type, topic, category })
 }
 
 export function listProjects(page = 1, size = 20) {
-  return request.get<unknown, { items: ContentProject[]; total: number; page: number; size: number }>(
+  return request.get<unknown, PaginatedResponse<ContentProject & { video_url: string | null; video_duration: number | null }>>(
     '/creation/projects',
     { params: { page, size } }
   )
 }
 
 export function getProjects(page = 1, size = 50) {
-  return request.get(`/creation/projects`, { params: { page, size } })
+  return request.get<unknown, PaginatedResponse<ContentProject & { video_url: string | null; video_duration: number | null }>>(`/creation/projects`, { params: { page, size } })
 }
 
 export function getProject(project_id: number) {
-  return request.get(`/creation/projects/${project_id}`)
+  return request.get<unknown, ContentProject & { video_url?: string | null; video_duration?: number | null }>(`/creation/projects/${project_id}`)
 }
 
 export function getProjectScripts(project_id: number) {
-  return request.get(`/creation/projects/${project_id}/scripts`)
+  return request.get<unknown, Script[]>(`/creation/projects/${project_id}/scripts`)
 }
 
 export function getTaskStatus(task_id: number) {
-  return request.get(`/tasks/${task_id}`)
+  return request.get<unknown, TaskStatus>(`/tasks/${task_id}`)
 }
 
 export function getTaskResult(task_id: number) {
-  return request.get(`/tasks/${task_id}/result`)
+  return request.get<unknown, { scripts: Script[]; video: VideoInfo | null; project_id: number }>(`/tasks/${task_id}/result`)
 }
 
 export function getTaskScripts(task_id: number) {
-  return request.get(`/tasks/${task_id}/scripts`)
+  return request.get<unknown, Script[]>(`/tasks/${task_id}/scripts`)
 }
 
 export function updateScript(script_id: number, content: string) {
-  return request.patch(`/creation/scripts/${script_id}`, { content })
+  return request.patch<unknown, Script>(`/creation/scripts/${script_id}`, { content })
 }
