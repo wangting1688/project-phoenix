@@ -163,7 +163,7 @@ const pipeline = computed(() => [
     key: 'produce',
     title: '4. 生成视频',
     desc: '用真人素材 + 克隆配音 + 字幕合成竖屏成片',
-    path: '/video-production',
+    path: '/works',
     stat: completedProjectCount.value ? `${completedProjectCount.value} 条已完成` : '未开始',
     done: completedProjectCount.value > 0,
   },
