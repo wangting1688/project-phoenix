@@ -310,6 +310,7 @@ const userStore = useUserStore()
 const taskId = Number(route.query.task_id || 0)
 const projectIdQuery = Number(route.query.project_id || 0)
 const projectId = ref<number | null>(null)
+const project = ref<(ContentProject & { video_url?: string | null; video_duration?: number | null }) | null>(null)
 const taskStatus = ref<TaskStatus | null>(null)
 const scripts = ref<Script[]>([])
 const video = ref<VideoInfo | null>(null)
@@ -365,8 +366,8 @@ const workflowSteps = [
 ]
 
 const taskProgress = computed(() => taskStatus.value?.progress || 0)
-const completed = computed(() => taskStatus.value?.status === 'completed')
-const failed = computed(() => taskStatus.value?.status === 'failed')
+const completed = computed(() => taskStatus.value?.status === 'completed' || project.value?.status === 'completed')
+const failed = computed(() => taskStatus.value?.status === 'failed' || project.value?.status === 'failed')
 const failReason = computed(
   () => taskStatus.value?.error_message || '创作流程执行失败，请稍后重试'
 )
@@ -379,16 +380,24 @@ onMounted(async () => {
   if (taskId) {
     pollStatus()
   } else if (projectIdQuery) {
-    // 从作品列表跳过来的，直接加载项目视频
+    // 从作品列表跳过来的，加载项目详情 + 脚本 + 视频
     try {
-      const project = await getProject(projectIdQuery)
+      const proj = await getProject(projectIdQuery)
       projectId.value = projectIdQuery
-      if (project?.video_url) {
+      project.value = proj
+      if (proj?.video_url) {
         renderedVideo.value = {
-          video_id: project.id,
-          output_url: project.video_url,
-          duration: project.video_duration
+          video_id: proj.id,
+          output_url: proj.video_url,
+          duration: proj.video_duration
         }
+      }
+      // 加载文案脚本
+      try {
+        const scriptList = await getProjectScripts(projectIdQuery)
+        scripts.value = scriptList || []
+      } catch {
+        scripts.value = []
       }
     } catch (e) {
       console.error('加载项目失败:', e)
