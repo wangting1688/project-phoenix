@@ -3,7 +3,7 @@
     <div class="page-head">
       <el-icon class="back-btn" :size="20" @click="$router.back()"><IArrowLeft /></el-icon>
       <span class="page-title">我的声音</span>
-      <span class="quota">{{ profiles.length }}/3</span>
+      <span class="quota">{{ profiles.length }}/1</span>
     </div>
 
     <!-- 录音主流程 -->
@@ -84,10 +84,10 @@
           type="primary"
           class="submit-btn"
           :loading="submitting"
-          :disabled="profiles.length >= 3"
+          :disabled="profiles.length >= 1"
           @click="handleSubmit"
         >
-          {{ profiles.length >= 3 ? '已达上限（最多 3 个）' : '提交训练' }}
+          {{ profiles.length >= 1 ? '已达上限（最多 1 个）' : '提交训练' }}
         </el-button>
         <div class="submit-tip">训练约需 10 秒，完成后即可用于视频配音</div>
       </div>

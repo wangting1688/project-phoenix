@@ -17,7 +17,12 @@ from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
 from app.models.video_production import VideoProductionJob, VideoProductionStep
 from app.models.video_edit_plan import VideoEditPlan, VideoEditSegment
+from app.models.asset_segment import AssetSegment
+from app.models.creator_asset import CreatorAsset
 from app.services.agent_tool_gateway import AgentToolGateway
+from pathlib import Path
+import os
+import time
 from app.services.timeline_builder import TimelineBuilder
 from app.services.growth_quality_agent import GrowthQualityAgent
 
@@ -164,6 +169,17 @@ class ProductionExecutorAgent:
 
         try:
             result = self._execute_step_logic(job_id, step)
+
+            if not result.get("success", False):
+                step.status = "failed"
+                step.error_message = result.get("error", "未知错误")
+                step.completed_at = datetime.now()
+                self.db.commit()
+
+                if step.retry_count < step.max_retries:
+                    return {"success": False, "error": step.error_message, "retry_count": step.retry_count, "will_retry": True}
+                return {"success": False, "error": step.error_message, "retry_count": step.retry_count, "will_retry": False}
+
             step.status = "completed"
             step.output_data = result.get("data")
             step.completed_at = datetime.now()
@@ -355,21 +371,128 @@ class ProductionExecutorAgent:
             return {"success": False, "error": "任务不存在"}
 
         timeline = self.timeline_builder.build_phoenix_timeline(job_id)
+        if isinstance(timeline, dict) and timeline.get("error"):
+            return {"success": False, "error": timeline["error"]}
 
         step.input_data = {
             "timeline": timeline,
             "job_id": job_id,
         }
 
+        segments = self._extract_render_segments(timeline, job.user_id)
+        subtitles = self._extract_render_subtitles(timeline)
+        platform_format = timeline.get("format", {})
+
+        output_path = str(
+            Path(__file__).resolve().parent.parent.parent
+            / "storage" / "output"
+            / f"render_{job_id}_{int(time.time())}.mp4"
+        )
+
         try:
             render_result = self.gateway.call_tool(
                 "ffmpeg_process",
-                timeline=timeline,
-                output_path=f"/tmp/output_{job_id}.mp4",
+                operation="render",
+                segments=segments,
+                subtitles=subtitles,
+                output_path=output_path,
+                width=platform_format.get("width", 1080),
+                height=platform_format.get("height", 1920),
+                fps=platform_format.get("fps", 30),
             )
+
+            if not render_result.get("success"):
+                return {
+                    "success": False,
+                    "error": render_result.get("error", "渲染失败"),
+                }
+
+            step.output_data = render_result.get("data")
             return {"success": True, "data": render_result.get("data")}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def _extract_render_segments(self, timeline: Dict[str, Any], user_id: int) -> List[Dict[str, Any]]:
+        """从 timeline 中提取可渲染的视频段（含实际文件路径）"""
+        segments = []
+        tracks = timeline.get("tracks", [])
+
+        for track in tracks:
+            if track.get("type") != "video":
+                continue
+            for seg in track.get("segments", []):
+                asset_id = seg.get("asset_id")
+                source_type = seg.get("source_type", "")
+                duration = seg.get("duration", 5)
+
+                if not asset_id:
+                    continue
+
+                file_path = self._resolve_asset_path(asset_id, source_type, user_id)
+                if file_path:
+                    segments.append({
+                        "path": file_path,
+                        "duration": duration,
+                    })
+
+        return segments
+
+    def _extract_render_subtitles(self, timeline: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """从 timeline 中提取字幕"""
+        subtitles = []
+        tracks = timeline.get("tracks", [])
+
+        for track in tracks:
+            if track.get("type") != "subtitle":
+                continue
+            for seg in track.get("segments", []):
+                text = seg.get("text", "")
+                start = seg.get("start", 0)
+                end = seg.get("end", start + 2)
+                if text and end > start:
+                    subtitles.append({
+                        "text": text,
+                        "start_sec": start,
+                        "end_sec": end,
+                    })
+
+        return subtitles
+
+    def _resolve_asset_path(self, source_id: int, source_type: str, user_id: int) -> str:
+        """根据素材ID解析实际文件路径"""
+        try:
+            asset_id = None
+            if source_type == "asset_segment":
+                seg = self.db.query(AssetSegment).filter(
+                    AssetSegment.id == source_id
+                ).first()
+                if seg:
+                    asset_id = seg.asset_id
+            else:
+                asset_id = source_id
+
+            if not asset_id:
+                return None
+
+            creator_asset = self.db.query(CreatorAsset).filter(
+                CreatorAsset.id == asset_id
+            ).first()
+            if not creator_asset or not creator_asset.url:
+                return None
+
+            url = creator_asset.url
+            p = Path(url)
+            if p.is_absolute() and p.exists():
+                return str(p)
+
+            storage_root = Path(__file__).resolve().parent.parent.parent
+            candidate = storage_root / url.lstrip("/")
+            if candidate.exists():
+                return str(candidate)
+
+            return None
+        except Exception:
+            return None
 
     def get_job_progress(self, job_id: int) -> Dict[str, Any]:
         """获取任务进度"""

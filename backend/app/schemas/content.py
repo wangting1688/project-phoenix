@@ -20,6 +20,10 @@ class ContentProjectResponse(BaseModel):
     workflow_status: Optional[str] = None
     video_url: Optional[str] = None
     video_duration: Optional[int] = None
+    video_status: Optional[str] = None
+    cover_url: Optional[str] = None
+    display_status: Optional[str] = None
+    error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

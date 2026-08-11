@@ -97,9 +97,20 @@ def _find_chinese_font() -> str:
 
 
 def _sanitize_text(text: str) -> str:
-    """移除 drawtext 不支持的字符, 单引号/冒号/反斜杠等需要转义"""
-    # drawtext 中 text='xxx' 单引号包裹, 内部单引号会破坏语法
-    return text.replace("\\", " ").replace("'", " ").replace(":", "：").replace("\n", " ")
+    """
+    清理 drawtext 文本中的危险字符。
+    ffmpeg filter_complex 用逗号分隔滤镜链，所以 text 里不能有逗号。
+    drawtext text='...' 单引号包裹，不能有单引号。
+    反斜杠也要去掉，避免转义问题。
+    """
+    return (
+        text.replace("\\", " ")
+        .replace("'", " ")
+        .replace(",", "，")   # 英文逗号 → 中文逗号（不破坏 filter 结构）
+        .replace(":", "：")
+        .replace("\n", " ")
+        .replace(";", "；")
+    )
 
 
 def _drawtext_filter(text: str, start_sec: float, end_sec: float, font: str) -> str:
@@ -303,9 +314,29 @@ def render_video(
     except Exception:
         pass
 
+    # 6.5) 生成封面缩略图（取第 1 秒帧）
+    cover_filename = out_filename.replace(".mp4", "_cover.jpg")
+    cover_path = output_dir / cover_filename
+    cover_url = None
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-y", "-ss", "1", "-i", str(out_path),
+                "-vframes", "1", "-q:v", "5",
+                "-vf", "scale=360:-2",
+                str(cover_path),
+            ],
+            capture_output=True, text=True, timeout=15,
+        )
+        if cover_path.exists() and cover_path.stat().st_size > 0:
+            cover_url = f"/static/output/{cover_filename}"
+    except Exception:
+        pass
+
     return {
         "output_path": str(out_path),
         "output_url": f"/static/output/{out_filename}",
+        "cover_url": cover_url,
         "duration": round(total_dur, 1),
         "has_audio": has_audio,
         "file_size": out_path.stat().st_size,

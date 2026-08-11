@@ -397,6 +397,42 @@ class FFmpegTool(BaseTool):
             description="水印文字",
             required=False,
         ),
+        ToolParameter(
+            name="segments",
+            type="array",
+            description="视频段列表 [{path, duration}]，render 操作专用",
+            required=False,
+        ),
+        ToolParameter(
+            name="subtitles",
+            type="array",
+            description="字幕列表 [{text, start_sec, end_sec}]，render 操作专用",
+            required=False,
+        ),
+        ToolParameter(
+            name="width",
+            type="integer",
+            description="输出宽度（render 操作，默认 1080）",
+            required=False,
+        ),
+        ToolParameter(
+            name="height",
+            type="integer",
+            description="输出高度（render 操作，默认 1920）",
+            required=False,
+        ),
+        ToolParameter(
+            name="fps",
+            type="integer",
+            description="输出帧率（render 操作，默认 30）",
+            required=False,
+        ),
+        ToolParameter(
+            name="audio_path",
+            type="string",
+            description="音频文件路径（render 操作配音用）",
+            required=False,
+        ),
     ]
     PROVIDER = "FFmpeg"
     COST = 0.0
@@ -406,11 +442,14 @@ class FFmpegTool(BaseTool):
         output_path = kwargs.get("output_path")
         operation = kwargs.get("operation")
 
-        if not input_path or not os.path.exists(input_path):
-            return {"error": "Input file not found"}
-
         if not output_path:
             return {"error": "Output path is required"}
+
+        if operation == "render":
+            return self._execute_render_operation(**kwargs)
+
+        if not input_path or not os.path.exists(input_path):
+            return {"error": "Input file not found"}
 
         try:
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -463,6 +502,169 @@ class FFmpegTool(BaseTool):
 
         except Exception as e:
             return {"error": str(e)}
+
+    def _execute_render_operation(self, **kwargs) -> Dict[str, Any]:
+        """完整渲染操作：多素材拼接 + 字幕烧录 + 可选配音"""
+        import platform
+        from pathlib import Path
+
+        segments = kwargs.get("segments") or []
+        subtitles = kwargs.get("subtitles") or []
+        output_path = kwargs.get("output_path")
+        width = int(kwargs.get("width", 1080))
+        height = int(kwargs.get("height", 1920))
+        fps = int(kwargs.get("fps", 30))
+        audio_path = kwargs.get("audio_path")
+
+        if not segments:
+            return {"error": "render 操作需要 segments 参数"}
+
+        valid_segments = []
+        for seg in segments:
+            p = seg.get("path", "")
+            if not p or not os.path.exists(p):
+                continue
+            dur = max(1, int(seg.get("duration") or 5))
+            valid_segments.append({"path": p, "duration": dur})
+
+        if not valid_segments:
+            return {"error": "所有素材路径无效，无可渲染输入"}
+
+        output_dir = os.path.dirname(output_path)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+
+        # 中文字体查找
+        font_candidates = [
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/STHeiti Medium.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+            "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+        ]
+        font = None
+        for fc in font_candidates:
+            if os.path.exists(fc):
+                font = fc
+                break
+
+        n = len(valid_segments)
+        input_args = []
+        for seg in valid_segments:
+            input_args += ["-ss", "0", "-t", str(seg["duration"]), "-i", seg["path"]]
+
+        # 每个输入先 scale 到目标分辨率，再 concat
+        scale_chain = ""
+        concat_inputs = ""
+        for i in range(n):
+            scale_chain += (
+                f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2:black,"
+                f"setsar=1,setpts=PTS-STARTPTS[v{i}];"
+            )
+            concat_inputs += f"[v{i}]"
+        scale_chain = scale_chain.rstrip(";")
+        concat_filter = scale_chain + ";" + f"{concat_inputs}concat=n={n}:v=1:a=0[cv]"
+
+        # 字幕 drawtext 链
+        def _sanitize_text(text: str) -> str:
+            return text.replace(chr(92), " ").replace(chr(39), " ").replace(":", "：").replace(chr(10), " ")
+
+        def _drawtext_filter(text: str, start_sec: float, end_sec: float) -> str:
+            safe = _sanitize_text(text)
+            return (
+                f"drawtext=fontfile={font}:"
+                f"text='{safe}':"
+                f"fontcolor=white:fontsize=64:"
+                f"box=1:boxcolor=black@0.55:boxborderw=18:"
+                f"x=(w-text_w)/2:y=h*0.78:"
+                f"enable='between(t,{start_sec},{end_sec})'"
+            )
+
+        drawtext_chain = []
+        if font and subtitles:
+            for sub in subtitles:
+                s = float(sub.get("start_sec") or 0)
+                e = float(sub.get("end_sec") or s + 2)
+                if e <= s:
+                    e = s + 2
+                text = sub.get("text") or ""
+                if not text.strip():
+                    continue
+                drawtext_chain.append(_drawtext_filter(text, s, e))
+
+        if drawtext_chain:
+            vf_arg = concat_filter + ";" + "[cv]" + ",".join(drawtext_chain) + "[outv]"
+        else:
+            vf_arg = concat_filter.replace("[cv]", "[outv]")
+
+        # 音频处理
+        audio_args = []
+        map_args = ["-map", "[outv]"]
+        has_audio = bool(audio_path and os.path.exists(audio_path))
+        if has_audio:
+            total_dur = sum(s["duration"] for s in valid_segments)
+            audio_args += ["-i", audio_path]
+            audio_idx = n
+            audio_filter = (
+                f"[{audio_idx}:a]atrim=0:{total_dur},asetpts=PTS-STARTPTS,"
+                f"apad=whole_len={int(total_dur * 24000)}[aout]"
+            )
+            vf_arg = vf_arg + ";" + audio_filter
+            map_args = ["-map", "[outv]", "-map", "[aout]"]
+
+        # 拼装命令
+        cmd = ["ffmpeg", "-y", "-loglevel", "error"]
+        cmd += input_args
+        cmd += audio_args
+        cmd += ["-filter_complex", vf_arg]
+        cmd += map_args
+        cmd += [
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "23",
+            "-pix_fmt", "yuv420p",
+            "-r", str(fps),
+            "-s", f"{width}x{height}",
+        ]
+        if has_audio:
+            cmd += ["-c:a", "aac", "-b:a", "128k", "-shortest"]
+        else:
+            cmd += ["-an"]
+        cmd.append(output_path)
+
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+
+        if result.returncode != 0:
+            return {"error": f"ffmpeg 失败 (rc={result.returncode}): {result.stderr[-500:]}"}
+
+        if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
+            size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+            return {"error": f"ffmpeg 输出文件异常: {output_path} ({size} bytes)"}
+
+        total_duration = sum(s["duration"] for s in valid_segments)
+        try:
+            probe = subprocess.run(
+                ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", output_path],
+                capture_output=True, text=True, timeout=10,
+            )
+            if probe.returncode == 0 and probe.stdout.strip():
+                total_duration = float(probe.stdout.strip())
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "output_path": output_path,
+            "operation": "render",
+            "duration": round(total_duration, 1),
+            "file_size": os.path.getsize(output_path),
+            "segment_count": n,
+            "subtitle_count": len(drawtext_chain),
+            "has_audio": has_audio,
+        }
 
 
 class AudioProcessingTool(BaseTool):
@@ -518,11 +720,14 @@ class AudioProcessingTool(BaseTool):
         output_path = kwargs.get("output_path")
         operation = kwargs.get("operation")
 
-        if not input_path or not os.path.exists(input_path):
-            return {"error": "Input file not found"}
-
         if not output_path:
             return {"error": "Output path is required"}
+
+        if operation == "render":
+            return self._execute_render_operation(**kwargs)
+
+        if not input_path or not os.path.exists(input_path):
+            return {"error": "Input file not found"}
 
         try:
             os.makedirs(os.path.dirname(output_path), exist_ok=True)

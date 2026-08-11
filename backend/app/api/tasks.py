@@ -6,6 +6,7 @@ from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models import User, WorkflowTask
 from app.schemas import TaskStatusResponse, TaskResultResponse, ApiResponse, ScriptResponse, VideoResponse
+from app.api.creation import _select_best_video
 
 router = APIRouter(prefix="/tasks", tags=["任务"])
 
@@ -55,12 +56,13 @@ def get_task_result(
 
     scripts = db.query(Script).filter(Script.project_id == project.id).all()
     videos = db.query(Video).filter(Video.project_id == project.id).all()
+    best_video = _select_best_video(videos)
 
     return ApiResponse(
         data=TaskResultResponse(
             project_id=project.id,
             scripts=[ScriptResponse.model_validate(s) for s in scripts],
-            video=VideoResponse.model_validate(videos[0]) if videos else None,
+            video=VideoResponse.model_validate(best_video) if best_video else None,
         )
     )
 

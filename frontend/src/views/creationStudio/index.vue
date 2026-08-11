@@ -102,7 +102,7 @@
     <!-- Step 3: 结果展示 -->
     <div v-else-if="step === 'result' && result" class="result-step">
       <div class="result-header">
-        <h1>✨ 创作完成</h1>
+        <h1>✨ AI 方案已生成</h1>
         <div class="result-actions">
           <el-button @click="resetStudio">🔄 重新创作</el-button>
           <el-button type="primary" @click="goToProject">📁 查看项目</el-button>

@@ -9,11 +9,13 @@ class ContentProject(Base, BaseModel):
     __tablename__ = "content_projects"
 
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), index=True, nullable=True)
     source_type = Column(String(50), index=True)
     topic = Column(String(500))
     category = Column(String(100), index=True)
     status = Column(String(50), default="draft", index=True)
     workflow_status = Column(String(100), nullable=True)
+    deleted_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="projects")
     contents = relationship("Content", back_populates="project", cascade="all, delete-orphan")
@@ -94,6 +96,7 @@ class WorkflowTask(Base, BaseModel):
     __tablename__ = "workflow_tasks"
 
     project_id = Column(Integer, ForeignKey("content_projects.id"), index=True, nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), index=True, nullable=True)
     task_type = Column(String(50), index=True)
     status = Column(String(50), default="waiting", index=True)
     progress = Column(Integer, default=0)
@@ -119,6 +122,7 @@ class CreationSession(Base, BaseModel):
     __tablename__ = "creation_sessions"
 
     user_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=False)
+    tenant_id = Column(Integer, ForeignKey("tenants.id"), index=True, nullable=True)
     source_type = Column(String(50), index=True)
     opportunity_id = Column(Integer, ForeignKey("content_opportunities.id"), nullable=True)
     project_id = Column(Integer, ForeignKey("content_projects.id"), nullable=True)

@@ -113,8 +113,24 @@ export interface RenderResult {
   has_audio: boolean
 }
 
-export function renderVideo(projectId: number, plan: CompositionPlan, scriptText = "", withTts = true, voiceProfileId?: number) {
+export function renderVideo(projectId: number, plan: CompositionPlan, scriptText = "", withTts = true, voiceProfileId?: number, withLipsync = true) {
   return request.post<unknown, RenderResult>(`/video/render/${projectId}`, {
-    plan, script_text: scriptText, with_tts: withTts, voice_profile_id: voiceProfileId ?? null,
+    plan, script_text: scriptText, with_tts: withTts, voice_profile_id: voiceProfileId ?? null, with_lipsync: withLipsync,
   })
+}
+
+export interface GenerateVideoParams {
+  script_id: number
+  voice_profile_id: number
+  footage_id: number
+  with_lipsync?: boolean
+}
+
+export interface GenerateTaskResponse {
+  task_id: number
+  status: string
+}
+
+export function generateVideo(projectId: number, params: GenerateVideoParams) {
+  return request.post<unknown, GenerateTaskResponse>(`/video/generate/${projectId}`, params)
 }

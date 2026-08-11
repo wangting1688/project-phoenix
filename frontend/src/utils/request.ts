@@ -25,16 +25,27 @@ request.interceptors.response.use(
   (response) => {
     const res = response.data
     // 后端存在两种响应格式, 统一在此解包为业务数据:
-    //   1) ApiResponse: { code, message, data }
-    //   2) 部分模块:    { success, data, message? }
-    if (res && typeof res === 'object' && 'code' in res) {
+    //   1) ApiResponse: { code: number, message: string, data: any }
+    //   2) 部分模块:    { success: boolean, data: any, message?: string }
+    // 通过类型+结构双重判断，避免业务数据包含 code/success 字段时被误判
+    if (
+      res &&
+      typeof res === 'object' &&
+      typeof res.code === 'number' &&
+      'data' in res
+    ) {
       if (res.code === 200) {
         return res.data
       }
       ElMessage.error(res.message || '请求失败')
       return Promise.reject(new Error(res.message || '请求失败'))
     }
-    if (res && typeof res === 'object' && 'success' in res) {
+    if (
+      res &&
+      typeof res === 'object' &&
+      typeof res.success === 'boolean' &&
+      'data' in res
+    ) {
       if (res.success) {
         return res.data
       }

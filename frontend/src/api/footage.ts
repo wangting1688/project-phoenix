@@ -18,6 +18,8 @@ export interface Footage {
   action?: string
   topics?: string[]
   status: string
+  source_type: string
+  source_ref?: string
   created_at: string
 }
 
@@ -58,4 +60,9 @@ export function deleteFootage(id: number) {
 
 export function getSuggestShots() {
   return request.get('/footage/suggest-shots')
+}
+
+
+export function restoreDemoFootages() {
+  return request.post<unknown, { restored_count: number }>('/footage/restore-demo')
 }

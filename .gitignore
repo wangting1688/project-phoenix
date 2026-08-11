@@ -125,3 +125,14 @@ frontend/components.d.ts
 
 # mkdocs
 /site
+
+# WorkBuddy 内部数据（记忆/技能，绝不提交）
+.workbuddy/
+
+# 备份与临时文件
+*.bak.*
+*.db.bak*
+
+# 前端构建临时/产物归档
+frontend/dist.tar.gz
+frontend/vite.config.ts.timestamp-*.mjs

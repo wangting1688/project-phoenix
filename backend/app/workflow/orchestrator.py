@@ -7,7 +7,6 @@ from app.workflow.content_workflow import ContentAnalysisWorkflow
 from app.workflow.planning_workflow import PlanningWorkflow
 from app.workflow.script_workflow import ScriptWorkflow
 from app.workflow.review_workflow import ReviewWorkflow
-from app.workflow.video_workflow import VideoGenerationWorkflow
 from app.workflow.optimization_workflow import OptimizationWorkflow
 from app.models import ContentProject, WorkflowTask, AITask
 from app.core.database import SessionLocal
@@ -19,7 +18,6 @@ class WorkflowOrchestrator:
         "planning",
         "scripting",
         "reviewing",
-        "generating_video",
         "optimizing",
         "completed"
     ]
@@ -29,7 +27,6 @@ class WorkflowOrchestrator:
         "planning": "Planning Agent",
         "scripting": "Script Agent",
         "reviewing": "Review Agent",
-        "generating_video": "Video Agent",
         "optimizing": "Operation Agent",
     }
 
@@ -72,11 +69,8 @@ class WorkflowOrchestrator:
                 return self._build_error_result(step_result)
             self.states["review_result"] = step_result["data"]
 
-            step_result = self._run_step("generating_video", self._run_video_generation, self.states["script_result"])
-            if not step_result["success"]:
-                return self._build_error_result(step_result)
-            self.states["video_result"] = step_result["data"]
-
+            # 注: MVP 阶段视频生成不再由 orchestrator 触发 (避免与 VideoProducer 重复建 Video)。
+            # 视频生成统一走 POST /video/generate → VideoProducer, 详见收敛方案。
             step_result = self._run_step("optimizing", self._run_optimization, self.states["script_result"])
             if not step_result["success"]:
                 return self._build_error_result(step_result)
@@ -141,12 +135,6 @@ class WorkflowOrchestrator:
 
     def _run_reviewing(self, script_result: Dict[str, Any]) -> Dict[str, Any]:
         workflow = ReviewWorkflow(self.project_id)
-        result = workflow.execute(script_result)
-        workflow.close()
-        return result
-
-    def _run_video_generation(self, script_result: Dict[str, Any]) -> Dict[str, Any]:
-        workflow = VideoGenerationWorkflow(self.project_id)
         result = workflow.execute(script_result)
         workflow.close()
         return result

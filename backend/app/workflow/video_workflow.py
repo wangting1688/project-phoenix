@@ -31,7 +31,7 @@ class VideoGenerationWorkflow(BaseWorkflow):
                 cover_url=None,
                 duration=60,
                 resolution="1080p",
-                status="generated"
+                status="ai_plan_ready"
             )
             self.db.add(video)
             self.db.commit()

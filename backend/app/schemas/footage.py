@@ -42,6 +42,8 @@ class FootageResponse(BaseModel):
     action: Optional[str] = None
     topics: Optional[list] = None
     status: str
+    source_type: str = "user_upload"
+    source_ref: Optional[str] = None
     created_at: datetime
 
     class Config:

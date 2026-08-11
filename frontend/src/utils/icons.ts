@@ -50,3 +50,9 @@ export const IInfoFilled = (ElementPlusIconsVue as any).InfoFilled
 export const IOffice = (ElementPlusIconsVue as any).OfficeBuilding
 export const IPromotion = (ElementPlusIconsVue as any).Promotion
 export const IConnection = (ElementPlusIconsVue as any).Connection
+export const IWarning = (ElementPlusIconsVue as any).Warning
+
+export const IDelete = (ElementPlusIconsVue as any).Delete
+export const IDownload = (ElementPlusIconsVue as any).Download
+export const ICircleClose = (ElementPlusIconsVue as any).CircleClose
+export const IClock = (ElementPlusIconsVue as any).Clock

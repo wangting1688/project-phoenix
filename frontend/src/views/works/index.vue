@@ -32,34 +32,136 @@
           class="work-card card"
           @click="viewWork(work)"
         >
+          <!-- 封面区域 -->
           <div class="work-cover">
-            <div class="cover-placeholder">
+            <img
+              v-if="work.cover_url"
+              :src="withToken(work.cover_url)"
+              class="cover-image"
+              alt="cover"
+              @error="coverError = true"
+            />
+            <div v-else class="cover-placeholder">
               <el-icon :size="40"><IVideoCamera /></el-icon>
+              <span class="cover-hint">{{ getCoverHint(work) }}</span>
             </div>
-            <div v-if="work.status === 'processing'" class="processing-overlay">
-              <el-icon class="loading-icon" :size="32"><ILoading /></el-icon>
+
+            <!-- 状态遮罩 -->
+            <div v-if="work.display_status === 'processing'" class="status-overlay processing">
+              <el-icon class="loading-icon" :size="28"><ILoading /></el-icon>
               <span>生成中...</span>
             </div>
-            <div v-if="work.status === 'completed'" class="play-btn">
-              <el-icon :size="32"><IVideoPlay /></el-icon>
+            <div v-else-if="work.display_status === 'failed'" class="status-overlay failed">
+              <el-icon :size="28"><ICircleClose /></el-icon>
+              <span>生成失败</span>
+            </div>
+            <div v-else-if="work.display_status === 'plan_ready'" class="status-overlay plan-ready">
+              <el-icon :size="28"><IDocument /></el-icon>
+              <span>方案已完成</span>
+            </div>
+            <div v-else-if="work.display_status === 'video_ready'" class="play-btn">
+              <el-icon :size="36"><IVideoPlay /></el-icon>
             </div>
           </div>
+
+          <!-- 信息区域 -->
           <div class="work-info">
-            <h4 class="work-title">{{ work.topic }}</h4>
+            <h4 class="work-title">{{ work.topic || '未命名作品' }}</h4>
             <div class="work-meta">
-              <span class="status" :class="work.status">
-                {{ getStatusText(work.status) }}
+              <span class="status" :class="work.display_status || work.status">
+                {{ getStatusText(work.display_status || work.status) }}
               </span>
               <span class="date">{{ formatDate(work.created_at) }}</span>
-              <a
-                v-if="work.status === 'completed' && work.video_url"
-                :href="`${work.video_url}?token=${encodeURIComponent(userStore.token)}`"
-                target="_blank"
-                class="download-btn"
-                @click.stop
-              >
-                下载
-              </a>
+            </div>
+
+            <!-- 操作按钮区域 -->
+            <div class="work-actions">
+              <template v-if="work.display_status === 'video_ready'">
+                <a
+                  v-if="work.video_url"
+                  :href="withToken(work.video_url)"
+                  target="_blank"
+                  class="action-btn download"
+                  @click.stop
+                >
+                  <el-icon><IDownload /></el-icon> 下载
+                </a>
+                <el-button
+                  size="small"
+                  type="danger"
+                  text
+                  class="action-btn delete"
+                  @click.stop="handleDelete(work)"
+                >
+                  <el-icon><IDelete /></el-icon> 删除
+                </el-button>
+              </template>
+
+              <template v-else-if="work.display_status === 'plan_ready'">
+                <el-button
+                  size="small"
+                  type="primary"
+                  text
+                  class="action-btn"
+                  @click.stop="goGenerate(work)"
+                >
+                  <el-icon><IVideoPlay /></el-icon> 生成视频
+                </el-button>
+                <el-button
+                  size="small"
+                  type="danger"
+                  text
+                  class="action-btn delete"
+                  @click.stop="handleDelete(work)"
+                >
+                  <el-icon><IDelete /></el-icon> 删除
+                </el-button>
+              </template>
+
+              <template v-else-if="work.display_status === 'processing'">
+                <el-button
+                  size="small"
+                  type="primary"
+                  text
+                  class="action-btn"
+                  @click.stop="viewWork(work)"
+                >
+                  查看进度
+                </el-button>
+              </template>
+
+              <template v-else-if="work.display_status === 'failed'">
+                <el-button
+                  size="small"
+                  type="primary"
+                  text
+                  class="action-btn"
+                  @click.stop="viewWork(work)"
+                >
+                  查看详情
+                </el-button>
+                <el-button
+                  size="small"
+                  type="danger"
+                  text
+                  class="action-btn delete"
+                  @click.stop="handleDelete(work)"
+                >
+                  <el-icon><IDelete /></el-icon> 删除
+                </el-button>
+              </template>
+
+              <template v-else>
+                <el-button
+                  size="small"
+                  type="danger"
+                  text
+                  class="action-btn delete"
+                  @click.stop="handleDelete(work)"
+                >
+                  <el-icon><IDelete /></el-icon> 删除
+                </el-button>
+              </template>
             </div>
           </div>
         </div>
@@ -79,48 +181,69 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessageBox, ElMessage } from 'element-plus'
 import {
   IVideoCamera,
   IVideoPlay,
   ILoading,
+  IDownload,
+  IDelete,
+  IDocument,
+  ICircleClose,
 } from '@/utils/icons'
-import { getProjects } from '@/api/creation'
+import { getProjects, deleteProject, type ContentProject } from '@/api/creation'
 import { useUserStore } from '@/stores/user'
 
 const router = useRouter()
 const userStore = useUserStore()
 
 const activeTab = ref('all')
+const coverError = ref(false)
 
 const tabs = [
   { label: '全部', value: 'all' },
   { label: '生成中', value: 'processing' },
-  { label: '已完成', value: 'completed' },
-  { label: '草稿', value: 'draft' },
+  { label: '方案完成', value: 'plan_ready' },
+  { label: '视频完成', value: 'video_ready' },
+  { label: '失败', value: 'failed' },
 ]
 
-const works = ref<Array<{
-  id: number
-  topic: string
-  status: string
-  created_at: string
-  video_url: string | null
-  video_duration: number | null
-}>>([])
+const works = ref<ContentProject[]>([])
 
 const filteredWorks = computed(() => {
   if (activeTab.value === 'all') return works.value
-  return works.value.filter(w => w.status === activeTab.value)
+  return works.value.filter(w => (w.display_status || w.status) === activeTab.value)
 })
+
+function withToken(url: string | null | undefined) {
+  if (!url) return ''
+  const sep = url.includes('?') ? '&' : '?'
+  return `${url}${sep}token=${encodeURIComponent(userStore.token)}`
+}
 
 function getStatusText(status: string) {
   const map: Record<string, string> = {
     draft: '草稿',
     processing: '生成中',
+    plan_ready: '方案完成',
+    rendering: '渲染中',
+    video_ready: '视频完成',
     completed: '已完成',
     failed: '失败',
   }
   return map[status] || status
+}
+
+function getCoverHint(work: ContentProject) {
+  const map: Record<string, string> = {
+    draft: '草稿',
+    processing: 'AI创作中',
+    plan_ready: '等待生成视频',
+    rendering: '视频渲染中',
+    video_ready: '点击播放',
+    failed: '生成失败',
+  }
+  return map[work.display_status || work.status] || '暂无封面'
 }
 
 function formatDate(dateStr: string) {
@@ -129,16 +252,54 @@ function formatDate(dateStr: string) {
   return `${date.getMonth() + 1}/${date.getDate()}`
 }
 
-function viewWork(work: { id: number }) {
-  router.push(`/result?project_id=${work.id}`)
+function viewWork(work: ContentProject) {
+  const status = work.display_status || work.status
+  if (status === 'plan_ready') {
+    // 方案已完成的作品，点卡片直接开始生成视频
+    router.push(`/result?project_id=${work.id}&action=generate`)
+  } else {
+    router.push(`/result?project_id=${work.id}`)
+  }
 }
-onMounted(async () => {
+
+function goGenerate(work: ContentProject) {
+  router.push(`/result?project_id=${work.id}&action=generate`)
+}
+
+async function handleDelete(work: ContentProject) {
   try {
-    const res = await getProjects()
+    await ElMessageBox.confirm(
+      `确定要删除「${work.topic || '该作品'}」吗？删除后无法恢复。`,
+      '删除确认',
+      {
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+        type: 'warning',
+      }
+    )
+  } catch {
+    return
+  }
+  try {
+    await deleteProject(work.id)
+    works.value = works.value.filter(w => w.id !== work.id)
+    ElMessage.success('删除成功')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '删除失败')
+  }
+}
+
+async function loadWorks() {
+  try {
+    const res = await getProjects(1, 50)
     works.value = res.items || []
   } catch (e) {
     console.error('加载作品失败:', e)
   }
+}
+
+onMounted(() => {
+  loadWorks()
 })
 </script>
 
@@ -149,6 +310,7 @@ onMounted(async () => {
 }
 
 .page-header {
+  position: relative;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   padding: 40px 20px 50px;
   color: #fff;
@@ -165,9 +327,6 @@ onMounted(async () => {
   opacity: 0.9;
 }
 
-.page-header {
-  position: relative;
-}
 .header-action {
   position: absolute;
   top: 16px;
@@ -187,17 +346,20 @@ onMounted(async () => {
   padding: 4px;
   margin-bottom: 16px;
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+  overflow-x: auto;
 }
 
 .tab-item {
   flex: 1;
+  min-width: 70px;
   text-align: center;
-  padding: 10px 0;
-  font-size: 14px;
+  padding: 10px 8px;
+  font-size: 13px;
   color: #606266;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.3s;
+  white-space: nowrap;
 }
 
 .tab-item.active {
@@ -232,30 +394,58 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   color: #667eea;
+  overflow: hidden;
+}
+
+.cover-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .cover-placeholder {
-  opacity: 0.5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.6;
+  gap: 8px;
 }
 
-.processing-overlay {
+.cover-hint {
+  font-size: 12px;
+}
+
+.status-overlay {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   color: #fff;
   font-size: 12px;
+  gap: 8px;
+}
+
+.status-overlay.processing {
+  background: rgba(102, 126, 234, 0.7);
+}
+
+.status-overlay.failed {
+  background: rgba(245, 108, 108, 0.7);
+}
+
+.status-overlay.plan-ready {
+  background: rgba(103, 194, 58, 0.6);
 }
 
 .loading-icon {
   animation: spin 1s linear infinite;
-  margin-bottom: 6px;
 }
 
 @keyframes spin {
@@ -269,7 +459,8 @@ onMounted(async () => {
   left: 50%;
   transform: translate(-50%, -50%);
   color: #fff;
-  opacity: 0.8;
+  opacity: 0.85;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .work-info {
@@ -290,6 +481,7 @@ onMounted(async () => {
   justify-content: space-between;
   align-items: center;
   font-size: 12px;
+  margin-bottom: 8px;
 }
 
 .status {
@@ -298,12 +490,14 @@ onMounted(async () => {
   font-size: 11px;
 }
 
+.status.video_ready,
 .status.completed {
   background: #f0f9eb;
   color: #67c23a;
 }
 
-.status.processing {
+.status.processing,
+.status.rendering {
   background: #ecf5ff;
   color: #409eff;
 }
@@ -318,8 +512,40 @@ onMounted(async () => {
   color: #f56c6c;
 }
 
+.status.plan_ready {
+  background: #fdf6ec;
+  color: #e6a23c;
+}
+
 .date {
   color: #c0c4cc;
+}
+
+.work-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #f0f0f0;
+}
+
+.action-btn {
+  flex: 1;
+  font-size: 12px;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+.action-btn.download {
+  color: #667eea;
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.action-btn.delete {
+  color: #f56c6c;
 }
 
 .empty-state {
@@ -327,14 +553,5 @@ onMounted(async () => {
   border-radius: 12px;
   padding: 60px 20px;
   text-align: center;
-}
-.download-btn {
-  color: #667eea;
-  text-decoration: none;
-  font-size: 13px;
-  margin-left: 8px;
-}
-.download-btn:hover {
-  text-decoration: underline;
 }
 </style>

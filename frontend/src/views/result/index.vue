@@ -93,7 +93,7 @@
       </div>
 
       <!-- 视频展示 -->
-      <div v-if="video || composition" class="section">
+      <div v-if="video || composition || composing || rendering || renderedVideo" class="section">
         <div class="section-header">
           <h3>素材片段预览 <el-tag size="small" type="info" effect="plain">demo 阶段</el-tag></h3>
         </div>
@@ -125,8 +125,14 @@
               @error="videoError = true"
             ></video>
             <div v-else class="video-placeholder">
-              <el-icon :size="48"><IVideoCamera /></el-icon>
-              <span>{{ videoError ? '素材加载失败, 请稍后重试' : '视频方案已生成' }}</span>
+              <el-icon v-if="composing || rendering" :size="48" class="loading-icon"><ILoading /></el-icon>
+              <el-icon v-else :size="48"><IVideoCamera /></el-icon>
+              <span>
+                {{ videoError ? '素材加载失败, 请稍后重试' : 
+                   rendering ? '正在渲染最终视频...' :
+                   composing ? '正在生成视频方案...' :
+                   '视频方案已生成' }}
+              </span>
             </div>
             <p v-if="!renderedSrc" class="preview-hint">
               下方为方案内第 1 段原始素材片段, 非最终成片
@@ -366,7 +372,12 @@ const workflowSteps = [
 ]
 
 const taskProgress = computed(() => taskStatus.value?.progress || 0)
-const completed = computed(() => taskStatus.value?.status === 'completed' || project.value?.status === 'completed')
+const completed = computed(() =>
+  taskStatus.value?.status === 'completed' ||
+  project.value?.status === 'completed' ||
+  project.value?.display_status === 'completed' ||
+  project.value?.workflow_status === 'completed'
+)
 const failed = computed(() => taskStatus.value?.status === 'failed' || project.value?.status === 'failed')
 const failReason = computed(
   () => taskStatus.value?.error_message || '创作流程执行失败，请稍后重试'
@@ -391,14 +402,39 @@ onMounted(async () => {
           output_url: proj.video_url,
           duration: proj.video_duration
         }
+        video.value = {
+          id: proj.id,
+          project_id: proj.id,
+          url: proj.video_url,
+          cover_url: (proj as any).cover_url,
+          duration: proj.video_duration,
+          status: (proj as any).video_status || 'rendered',
+        }
       }
       // 加载文案脚本
       try {
         const scriptList = await getProjectScripts(projectIdQuery)
         scripts.value = scriptList || []
+        // 脚本加载完成后，如果是 action=generate 且视频还没渲染，自动生成
+        console.log('[result] action generate check:', {
+          action: route.query.action,
+          scriptCount: scripts.value.length,
+          hasRenderedVideo: !!renderedVideo.value,
+        })
+        if (
+          route.query.action === 'generate' &&
+          scripts.value.length > 0 &&
+          !renderedVideo.value
+        ) {
+          console.log('[result] 触发自动生成')
+          autoGenerateAndRender(scripts.value[0].id)
+        }
       } catch {
         scripts.value = []
       }
+      // 创作完成后填充运营方案：project 分支不会走 pollStatus，必须在此主动加载，
+      // 否则「运营方案」区块虽因 completed=true 显示，但标题/标签等内容恒为空（V1 默认数据）。
+      loadOperationData()
     } catch (e) {
       console.error('加载项目失败:', e)
     }
@@ -448,10 +484,11 @@ async function pollStatus() {
 
 async function loadOperationData() {
   // 这里可以从task的result字段中获取运营方案
-  // V1暂时用默认数据
+  // V1暂时用默认数据（优先取项目真实主题，其次 URL 参数）
+  const topic = (project.value as any)?.topic || route.query.topic || '健康'
   operationData.value = {
     titles: [
-      `${route.query.topic || '健康'}不好？这几个方法一定要试试`,
+      `${topic}不好？这几个方法一定要试试`,
       '45岁后，这个问题怎么解决？',
       '别再发愁了，这样做效果最好',
     ],
@@ -535,7 +572,6 @@ function extractApiError(err: any): string {
 }
 
 function goGenerateVideo(scriptId?: number) {
-  if (!taskId) return
   if (!projectId.value || projectId.value <= 0) {
     ElMessage.error('项目ID未加载，请稍候再试')
     return
@@ -598,6 +634,38 @@ function goRenderVideo() {
     .finally(() => {
       rendering.value = false
     })
+}
+
+async function autoGenerateAndRender(scriptId?: number) {
+  /**
+   * 一键生成：自动生成视频方案 → 自动渲染最终视频
+   * 从作品页「生成视频」按钮跳过来时触发
+   */
+  console.log('[autoGenerateAndRender] 开始执行, projectId=', projectId.value, 'scriptId=', scriptId)
+  if (!projectId.value || projectId.value <= 0) return
+  composing.value = true
+  try {
+    const res: any = await composeVideo(projectId.value, scriptId)
+    composition.value = res as ComposeResult
+    ElMessage.success(`视频方案已生成，开始渲染...`)
+    // 直接开始渲染
+    rendering.value = true
+    const scriptText = scripts.value[activeScript.value]?.content || ''
+    const renderRes: any = await renderVideo(
+      projectId.value,
+      composition.value.plan,
+      scriptText,
+      true,
+      selectedVoiceId.value ?? undefined,
+    )
+    renderedVideo.value = renderRes
+    ElMessage.success(`最终视频已生成 (${renderRes.duration}s)`)
+  } catch (err: any) {
+    ElMessage.error(extractApiError(err))
+  } finally {
+    composing.value = false
+    rendering.value = false
+  }
 }
 
 </script>

@@ -150,6 +150,8 @@ class ToolRegistry:
         func = tool["func"]
         try:
             result = func(**kwargs)
+            if isinstance(result, dict) and "error" in result:
+                return {"success": False, "error": result["error"], "data": result}
             return {"success": True, "data": result}
         except Exception as e:
             return {"success": False, "error": str(e)}

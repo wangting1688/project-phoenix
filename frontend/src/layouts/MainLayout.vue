@@ -22,30 +22,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  IHouse,
   IVideoCamera,
-  IFiles,
-  IUser,
   IPicture,
+  IFiles,
 } from '@/utils/icons'
 
 const route = useRoute()
 const router = useRouter()
 
 const tabs = [
-  { path: '/home', label: '首页', icon: IHouse },
-  { path: '/creation', label: '创作', icon: IVideoCamera },
-  { path: '/footage', label: '素材', icon: IPicture },
-  { path: '/works', label: '作品', icon: IFiles },
-  { path: '/profile', label: '我的', icon: IUser },
+  { path: '/creation', label: '创建视频', icon: IVideoCamera },
+  { path: '/footage', label: '我的素材', icon: IPicture },
+  { path: '/works', label: '我的作品', icon: IFiles },
 ]
 
 const activeTab = computed(() => {
   const path = route.path
-  return tabs.find(tab => path.startsWith(tab.path))?.path || '/home'
+  // 结果页、详情页也算在"我的作品"Tab
+  if (path.startsWith('/result')) return '/works'
+  // 其他非Tab页面高亮第一个
+  const match = tabs.find(tab => path.startsWith(tab.path))
+  return match?.path || '/creation'
 })
 
 function switchTab(path: string) {
@@ -79,8 +79,9 @@ function switchTab(path: string) {
   display: flex;
   justify-content: space-around;
   align-items: center;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
-  z-index: 1000;
+  border-top: 1px solid #ebeef5;
+  z-index: 100;
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .tab-item {
@@ -89,10 +90,11 @@ function switchTab(path: string) {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  gap: 4px;
   color: #909399;
-  transition: color 0.3s;
-  padding: 5px 0;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.2s;
 }
 
 .tab-item.active {
@@ -100,7 +102,6 @@ function switchTab(path: string) {
 }
 
 .tab-label {
-  font-size: 12px;
-  margin-top: 2px;
+  font-size: 11px;
 }
 </style>

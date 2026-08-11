@@ -39,3 +39,11 @@ class Footage(Base, BaseModel):
     status = Column(String(50), default="ready", index=True)  # ready/analyzing/error
 
     category = relationship("FootageCategory", back_populates="footages")
+
+    # ===== 素材来源 =====
+    # user_upload: 用户上传（默认）
+    # system_demo: 系统演示素材
+    # ai_generated: AI 生成素材
+    # partner_provided: 合作方提供素材
+    source_type = Column(String(30), default="user_upload", server_default="user_upload", index=True, nullable=False)
+    source_ref = Column(String(128), nullable=True, index=True)

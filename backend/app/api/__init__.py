@@ -1,5 +1,7 @@
 from fastapi import APIRouter
 
+from app.core.config import settings
+
 from app.api.auth import router as auth_router
 from app.api.creation import router as creation_router
 from app.api.tasks import router as tasks_router
@@ -29,6 +31,7 @@ from app.api.growth_insights import router as growth_insights_router
 from app.api.growth_causal_graph import router as growth_causal_router
 from app.api.ingest import router as ingest_router
 from app.api.tenant import router as tenant_router
+from app.api.monitoring import router as monitoring_router
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -51,13 +54,17 @@ api_router.include_router(asset_intelligence_router)
 api_router.include_router(asset_segment_router)
 api_router.include_router(video_director_router)
 api_router.include_router(director_learning_router)
-api_router.include_router(agent_gateway_router)
 api_router.include_router(voice_profile_router)
 api_router.include_router(production_execution_router)
-api_router.include_router(growth_quality_router)
-api_router.include_router(growth_review_router)
-api_router.include_router(growth_decision_router)
-api_router.include_router(growth_insights_router)
-api_router.include_router(growth_causal_router)
+# 增长系列 + agent 网关：封闭内测默认关闭，避免未接前端的复杂模块引发事故
+# 需要启用时在 .env 设置 ENABLE_GROWTH_APIS=true
+if settings.ENABLE_GROWTH_APIS:
+    api_router.include_router(agent_gateway_router)
+    api_router.include_router(growth_quality_router)
+    api_router.include_router(growth_review_router)
+    api_router.include_router(growth_decision_router)
+    api_router.include_router(growth_insights_router)
+    api_router.include_router(growth_causal_router)
 api_router.include_router(ingest_router)
 api_router.include_router(tenant_router)
+api_router.include_router(monitoring_router)

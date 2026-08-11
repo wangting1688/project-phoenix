@@ -7,6 +7,12 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
 
+    # CORS 允许的来源，逗号分隔，* 表示允许所有（仅开发环境用）
+    CORS_ORIGINS: str = "*"
+
+    # 增长系列 API + agent 网关路由开关（封闭内测默认关闭，缩小事故面）
+    ENABLE_GROWTH_APIS: bool = False
+
     DATABASE_URL: str = "sqlite:///./phoenix.db"
 
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -16,6 +22,16 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7
 
     STORAGE_PATH: str = "./storage"
+
+    # ===== 演示素材开关 =====
+    # 新用户注册时是否自动注入系统演示素材
+    DEMO_FOOTAGE_ENABLED: bool = True
+    # 演示素材源目录（相对于 STORAGE_PATH）
+    DEMO_FOOTAGE_SOURCE_DIR: str = "demo_footage"
+    # 每个用户注入的演示素材最大数量
+    DEMO_FOOTAGE_MAX_COUNT: int = 6
+    # 演示素材是否允许用户编辑标签（scene/emotion/topics）
+    DEMO_FOOTAGE_ALLOW_EDIT_TAGS: bool = False
 
     # AI 配置 (mock / ark)
     AI_PROVIDER: str = "mock"

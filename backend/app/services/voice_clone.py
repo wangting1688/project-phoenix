@@ -19,6 +19,7 @@
 - 训练接口的成功状态码 2/4 才标记 profile.status='active'
 """
 import os
+import logging
 import re
 import uuid
 import shutil
@@ -32,6 +33,8 @@ import urllib.error
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
+logger = logging.getLogger(__name__)
+
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -40,7 +43,7 @@ from app.models.voice_profile import UserVoiceProfile
 
 
 # ===== 业务规则常量 =====
-MAX_PROFILES_PER_USER = 3
+MAX_PROFILES_PER_USER = 1
 # 火山原生支持的格式
 VOLC_AUDIO_FORMATS = {"mp3", "wav", "ogg", "m4a", "aac", "pcm"}
 # 浏览器 MediaRecorder 输出格式, 需转码后再送火山
@@ -70,6 +73,17 @@ def _demos_dir(user_id: int) -> Path:
 def _is_volc_configured() -> bool:
     """训练/合成共用同一 X-Api-Key, 一个就够"""
     return bool(settings.VOLC_TTS_API_KEY) and bool(settings.VOLC_TTS_BASE_URL)
+
+
+def _is_production() -> bool:
+    """生产模式判定: settings.DEBUG 为 False 视为生产环境。
+
+    生产环境必须配置火山 TTS, 不允许静默降级到本地 fallback。
+    """
+    try:
+        return not settings.DEBUG
+    except Exception:
+        return False
 
 
 def _volc_post(path: str, body: Dict[str, Any], timeout: int = None) -> Dict[str, Any]:
@@ -440,25 +454,41 @@ def train_voice(db, profile_id, user_id):
 
 def synthesize(db, custom_speaker_id, text, output_path, language=0):
     """
-    合成优先级: 用户克隆音色 -> 火山官方音色 -> macOS say
+    合成优先级: 用户克隆音色 -> 火山官方音色 -> 本地 macOS say (仅开发/测试模式)
+
+    模式区分 (依据 settings.DEBUG):
+    - 生产模式 (DEBUG=False): 必须配置火山 TTS, 否则显式报错, 不允许静默降级
+    - 开发/测试模式 (DEBUG=True): 允许本地 fallback (macOS say)
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    volc_ok = _is_volc_configured()
+
+    if not volc_ok:
+        if _is_production():
+            raise RuntimeError(
+                "生产环境未配置火山 TTS (VOLC_TTS_API_KEY)，无法生成配音；"
+                "请在生产环境配置 VOLC_TTS_API_KEY 后重试"
+            )
+        logger.warning("火山 TTS 未配置，开发/测试模式允许本地 fallback (macOS say)")
+
     # 1. 用户克隆声纹 (需 volc.megatts.timbre 授权)
-    if custom_speaker_id and _is_volc_configured():
+    if custom_speaker_id and volc_ok:
         mp3_bytes = _call_volc_synthesize(custom_speaker_id, text, language)
         if mp3_bytes:
             output_path.write_bytes(mp3_bytes)
             return output_path
 
     # 2. 火山官方精品音色 (已开通可用)
-    mp3_bytes = _call_volc_official_tts(text)
-    if mp3_bytes:
-        output_path.write_bytes(mp3_bytes)
-        return output_path
+    if volc_ok:
+        mp3_bytes = _call_volc_official_tts(text)
+        if mp3_bytes:
+            output_path.write_bytes(mp3_bytes)
+            return output_path
 
-    # 3. 本地兜底
+    # 3. 本地兜底 (仅 macOS; 开发/测试模式)
+    logger.warning("使用本地 macOS say 兜底生成 TTS")
     return _fallback_tts(text, output_path)
 
 
@@ -499,10 +529,13 @@ def delete_profile(db, profile_id, user_id):
     if not profile:
         return False
     profile.status = "deleted"
-    if profile.sample_path and Path(profile.sample_path).exists():
-        try:
-            Path(profile.sample_path).unlink()
-        except OSError:
-            pass
+    # 清理音频样本文件
+    for path_attr in ['sample_path', 'demo_audio_path']:
+        path = getattr(profile, path_attr, None)
+        if path and Path(path).exists():
+            try:
+                Path(path).unlink()
+            except OSError:
+                pass
     db.commit()
     return True

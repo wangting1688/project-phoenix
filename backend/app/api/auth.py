@@ -26,6 +26,16 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         data={"sub": str(user.id)},
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
+    # 注入系统演示素材（如果启用）
+    try:
+        from app.services.demo_assets import seed_demo_footages, is_demo_footage_enabled
+        if is_demo_footage_enabled():
+            seed_demo_footages(db, user.id)
+    except Exception:
+        # 演示素材注入失败不阻塞注册流程
+        import logging
+        logging.getLogger(__name__).warning("演示素材注入失败", exc_info=True)
+
     return ApiResponse(
         data=LoginResponse(
             token=access_token,
@@ -47,6 +57,16 @@ def login(user_in: UserLogin, db: Session = Depends(get_db)):
         data={"sub": str(user.id)},
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
     )
+    # 注入系统演示素材（如果启用）
+    try:
+        from app.services.demo_assets import seed_demo_footages, is_demo_footage_enabled
+        if is_demo_footage_enabled():
+            seed_demo_footages(db, user.id)
+    except Exception:
+        # 演示素材注入失败不阻塞注册流程
+        import logging
+        logging.getLogger(__name__).warning("演示素材注入失败", exc_info=True)
+
     return ApiResponse(
         data=LoginResponse(
             token=access_token,

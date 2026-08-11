@@ -8,6 +8,7 @@ from app.api.deps import get_current_user
 from app.models import User, Script, Footage, Video, ContentProject
 from app.services.video_service import video_service
 from app.services.video_renderer import render_video as do_render_video
+from app.services.video_producer import VideoProducer
 from app.schemas.common import ApiResponse
 
 router = APIRouter(prefix="/video", tags=["视频生成"])
@@ -106,6 +107,7 @@ class RenderRequest(BaseModel):
     plan: dict
     script_text: str = ""  # 用于 TTS 配音 (前端传当前选中的文案)
     with_tts: bool = True  # 是否启用 TTS 配音
+    with_lipsync: bool = True  # 是否启用人脸口型同步（默认开启）
     voice_profile_id: Optional[int] = None  # 用 user 声纹 (C1 接入, 训练完成后用 cloned voice)
 
 
@@ -157,12 +159,13 @@ def render_final_video(
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=f"渲染失败: {e}")
 
-    # 更新 Video 记录 (用 url 字段存渲染输出, 不引入新字段)
+    # 更新 Video 记录
     video = db.query(Video).filter(Video.project_id == project_id).first()
     if video:
         video.status = "rendered"
         video.duration = int(result["duration"])
         video.url = result["output_url"]
+        video.cover_url = result.get("cover_url")
     else:
         video = Video(
             project_id=project_id,
@@ -170,6 +173,7 @@ def render_final_video(
             resolution=plan.get("output_format", {}).get("resolution", "1080x1920"),
             status="rendered",
             url=result["output_url"],
+            cover_url=result.get("cover_url"),
         )
         db.add(video)
     db.commit()
@@ -179,6 +183,7 @@ def render_final_video(
         data={
             "video_id": video.id,
             "output_url": result["output_url"],
+            "cover_url": result.get("cover_url"),
             "duration": result["duration"],
             "has_audio": result["has_audio"],
             "file_size": result["file_size"],
@@ -186,6 +191,49 @@ def render_final_video(
             "subtitle_count": result["subtitle_count"],
         }
     )
+
+
+class GenerateVideoRequest(BaseModel):
+    script_id: Optional[int] = None
+    voice_profile_id: int
+    footage_id: int
+    with_lipsync: bool = True
+
+
+@router.post("/generate/{project_id}", response_model=ApiResponse[dict])
+def generate_video(
+    project_id: int,
+    body: GenerateVideoRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    一键生成视频（异步任务）。
+
+    完整流程：文案 → TTS配音 → 口型同步 → 视频渲染 → 输出成片
+    返回 task_id，通过 /tasks/{task_id} 轮询进度。
+    """
+    project = (
+        db.query(ContentProject)
+        .filter(
+            ContentProject.id == project_id,
+            ContentProject.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+
+    task_id = VideoProducer.create_task(
+        project_id=project_id,
+        user_id=current_user.id,
+        script_id=body.script_id,
+        voice_profile_id=body.voice_profile_id,
+        footage_id=body.footage_id,
+        with_lipsync=body.with_lipsync,
+    )
+
+    return ApiResponse(data={"task_id": task_id, "status": "running"})
 
 
 @router.get("/plan/{project_id}", response_model=ApiResponse[dict])

@@ -1,4 +1,7 @@
 import os
+import re
+import shutil
+import subprocess
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.orm import Session
@@ -20,6 +23,61 @@ router = APIRouter(prefix="/footage", tags=["素材库"])
 
 UPLOAD_DIR = os.path.join(settings.STORAGE_PATH, "footage")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def _find_bin(name: str):
+    """查找 ffmpeg/ffprobe，兼容 systemd 等服务环境下 PATH 不含 /usr/local/bin 的情况。"""
+    for p in (shutil.which(name), f"/usr/local/bin/{name}", f"/usr/bin/{name}"):
+        if p and os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+
+def _probe_duration(file_path: str) -> int:
+    """提取视频时长（秒）。优先 ffprobe，回退 ffmpeg -i 解析 Duration。"""
+    ffprobe = shutil.which("ffprobe")
+    if ffprobe:
+        try:
+            out = subprocess.run(
+                [ffprobe, "-v", "error", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", file_path],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=60,
+            )
+            val = out.stdout.strip()
+            if val:
+                return int(float(val))
+        except Exception:
+            pass
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        try:
+            out = subprocess.run([ffmpeg, "-i", file_path],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True, timeout=60)
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+)", out.stderr)
+            if m:
+                h, mi, s = map(int, m.groups())
+                return h * 3600 + mi * 60 + s
+        except Exception:
+            pass
+    return 0
+
+
+def _generate_thumbnail(file_path: str, thumb_path: str) -> bool:
+    """用 ffmpeg 截取视频第 1 秒的一帧作为缩略图。"""
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return False
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-ss", "00:00:01", "-i", file_path,
+             "-frames:v", "1", "-q:v", "3", thumb_path],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+        )
+        return os.path.exists(thumb_path)
+    except Exception:
+        return False
+
 
 
 @router.get("/categories", response_model=ApiResponse[List[FootageCategoryResponse]])
@@ -72,12 +130,22 @@ async def upload_footage(
     with open(file_path, "wb") as f:
         f.write(content)
 
+    # 提取视频时长 + 生成缩略图
+    duration = _probe_duration(file_path)
+    stem = os.path.splitext(filename)[0]
+    thumb_filename = f"{stem}_thumb.jpg"
+    thumb_path = os.path.join(user_dir, thumb_filename)
+    thumb_url = None
+    if _generate_thumbnail(file_path, thumb_path):
+        thumb_url = f"/static/footage/{current_user.id}/{thumb_filename}"
+
     footage = Footage(
         user_id=current_user.id,
         category_id=category_id,
         filename=file.filename or filename,
         file_path=file_path,
-        duration=0,
+        thumbnail=thumb_url,
+        duration=duration,
         file_size=len(content),
         resolution="1080x1920",
         status="ready",
@@ -97,7 +165,7 @@ def list_footages(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(Footage).filter(Footage.user_id == current_user.id)
+    query = db.query(Footage).filter(Footage.user_id == current_user.id, Footage.status != "deleted")
     if category_id:
         query = query.filter(Footage.category_id == category_id)
     if scene:
@@ -163,6 +231,13 @@ def delete_footage(
     if not footage:
         raise HTTPException(status_code=404, detail="素材不存在")
 
+
+    # 系统素材只软删除，不删物理文件
+    if footage.source_type != "user_upload":
+        footage.status = "deleted"
+        db.commit()
+        return ApiResponse(data={"deleted": True, "type": "soft"})
+
     if os.path.exists(footage.file_path):
         os.remove(footage.file_path)
     db.delete(footage)
@@ -201,3 +276,14 @@ def get_suggest_shots(
         ],
     }
     return ApiResponse(data=suggestions)
+
+
+@router.post("/restore-demo", response_model=ApiResponse[dict])
+def restore_demo_footages(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """恢复被删除的演示素材，并补充可能新增的系统素材"""
+    from app.services.demo_assets import restore_demo_footages
+    count = restore_demo_footages(db, current_user.id)
+    return ApiResponse(data={"restored_count": count})

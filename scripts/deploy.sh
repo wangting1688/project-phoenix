@@ -109,6 +109,25 @@ find . -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
 [ -d .venv ] || python3.11 -m venv .venv
 .venv/bin/pip install -q --upgrade pip
 .venv/bin/pip install -q -r requirements.txt
+# 迁移前先备份数据库，便于回滚时恢复
+# 从 .env 读取 DATABASE_URL 推断数据库文件路径
+DB_FILE=""
+if [ -f .env ]; then
+  DB_URL=\$(grep "^DATABASE_URL=" .env | cut -d= -f2- || true)
+  if echo "\$DB_URL" | grep -q "^sqlite:///"; then
+    DB_FILE=\$(echo "\$DB_URL" | sed 's|^sqlite:///||')
+  fi
+fi
+if [ -n "\$DB_FILE" ] && [ -f "\$DB_FILE" ]; then
+  DB_BK=".releases/db-\$(date +%Y%m%d-%H%M%S).sqlite"
+  mkdir -p .releases
+  sudo -u $RUN_USER cp -a "\$DB_FILE" "\$DB_BK"
+  echo "  数据库已备份: \$(basename "\$DB_BK")"
+  # 只保留最近 5 份数据库备份
+  ls -1dt .releases/db-*.sqlite 2>/dev/null | tail -n +6 | while read -r old; do
+    rm -f "\$old"; echo "  清理旧数据库备份: \$(basename "\$old")"
+  done
+fi
 sudo -u $RUN_USER .venv/bin/alembic upgrade head 2>&1 | grep -E 'Running upgrade|ERROR' || echo "  (数据库已是最新)"
 EOF
   c_ok "依赖与数据库就绪"
@@ -196,7 +215,21 @@ do_rollback() {
   read -r -p "输入要回滚的备份名 (直接回车取消): " pick
   [ -n "$pick" ] || { c_warn "已取消"; exit 0; }
 
-  $SSH "bash -s" <<EOF
+  # 后端回滚前，先确认是否恢复数据库（在本地交互）
+  local restore_db=""
+  if [[ "$pick" == backend-* ]]; then
+    local db_backups
+    db_backups=$($SSH "ls -1dt $REMOTE_ROOT/backend/.releases/db-*.sqlite 2>/dev/null | head -5 | xargs -r -n1 basename" || true)
+    if [ -n "$db_backups" ]; then
+      echo ""
+      echo "=== 可用数据库备份 ==="
+      echo "$db_backups" | sed 's/^/  /'
+      echo ""
+      read -r -p "是否恢复数据库备份? 输入备份名恢复，直接回车跳过: " restore_db
+    fi
+  fi
+
+  $SSH "bash -s" <<REMOTE_EOF
 set -e
 BK="$REMOTE_ROOT/.releases/$pick"
 [ -d "\$BK" ] || { echo "备份不存在: \$BK"; exit 1; }
@@ -208,8 +241,20 @@ case "$pick" in
     [ -f "\$BK/requirements.txt" ] && cp -a "\$BK/requirements.txt" $REMOTE_ROOT/backend/
     chown -R $RUN_USER:$RUN_USER $REMOTE_ROOT/backend/app $REMOTE_ROOT/backend/alembic
     find $REMOTE_ROOT/backend -name '__pycache__' -type d -exec rm -rf {} + 2>/dev/null || true
+    # 恢复数据库（如果指定了）
+    if [ -n "$restore_db" ]; then
+      DB_BK_FILE="$REMOTE_ROOT/backend/.releases/$restore_db"
+      if [ -f "\$DB_BK_FILE" ]; then
+        systemctl stop $SERVICE
+        cp -a "\$DB_BK_FILE" $REMOTE_ROOT/backend/phoenix.db
+        chown $RUN_USER:$RUN_USER $REMOTE_ROOT/backend/phoenix.db
+        echo "  数据库已恢复: $restore_db"
+      else
+        echo "  警告: 数据库备份不存在，跳过恢复"
+      fi
+    fi
     systemctl restart $SERVICE
-    echo "后端已回滚 (注意: 数据库迁移不会自动降级)"
+    echo "后端已回滚"
     ;;
   frontend-*)
     rm -rf $REMOTE_ROOT/frontend/dist
@@ -219,7 +264,7 @@ case "$pick" in
     ;;
   *) echo "无法识别的备份类型: $pick"; exit 1;;
 esac
-EOF
+REMOTE_EOF
   sleep 5
   verify && c_ok "回滚完成"
 }

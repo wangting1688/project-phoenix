@@ -14,6 +14,12 @@ if not settings.DEBUG and settings.SECRET_KEY == _DEFAULT_SECRET_KEY:
         "生产环境必须修改 SECRET_KEY！请在 .env 或环境变量中设置强随机密钥。"
     )
 
+if not settings.DEBUG and settings.CORS_ORIGINS.strip() == "*":
+    raise RuntimeError(
+        "生产环境 CORS_ORIGINS 不能为 *！请在 .env 中设置具体前端域名，"
+        "如 CORS_ORIGINS=https://phoenix.example.com"
+    )
+
 if not settings.DEBUG and settings.DATABASE_URL.startswith("sqlite"):
     import warnings
     _warn_lines = [
@@ -214,15 +220,16 @@ async def serve_static(file_path: str, request: Request):
 def cleanup_stuck_tasks():
     from app.core.database import SessionLocal
     from app.models.content import WorkflowTask, ContentProject
+    from app.models.ai_task import AITask
 
     db = SessionLocal()
     try:
-        stuck_tasks = db.query(WorkflowTask).filter(
+        stuck_workflow = db.query(WorkflowTask).filter(
             WorkflowTask.status.in_(["waiting", "running"])
         ).all()
-        if stuck_tasks:
-            project_ids = [t.project_id for t in stuck_tasks]
-            for task in stuck_tasks:
+        if stuck_workflow:
+            project_ids = [t.project_id for t in stuck_workflow]
+            for task in stuck_workflow:
                 task.status = "failed"
                 task.error_message = "服务重启导致任务中断，请重新创建"
             if project_ids:
@@ -233,6 +240,15 @@ def cleanup_stuck_tasks():
                     {"status": "failed", "workflow_status": "interrupted"},
                     synchronize_session=False,
                 )
+            db.commit()
+
+        stuck_ai = db.query(AITask).filter(
+            AITask.status.in_(["pending", "running"])
+        ).all()
+        if stuck_ai:
+            for task in stuck_ai:
+                task.status = "failed"
+                task.error_message = "服务重启导致任务中断"
             db.commit()
     finally:
         db.close()
@@ -249,7 +265,54 @@ def root():
 
 @app.get("/health")
 def health_check():
-    return {"status": "healthy"}
+    import time
+    from pathlib import Path
+    from sqlalchemy import text
+
+    checks = {}
+    overall_status = "healthy"
+
+    db_ok = False
+    db_error = None
+    db_start = time.time()
+    try:
+        from app.core.database import engine
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception as e:
+        db_error = str(e)
+        overall_status = "degraded"
+    checks["database"] = {
+        "status": "ok" if db_ok else "fail",
+        "response_time_ms": round((time.time() - db_start) * 1000, 2),
+        "error": db_error,
+    }
+
+    storage_ok = False
+    storage_error = None
+    storage_path = str(Path(settings.STORAGE_PATH).resolve())
+    try:
+        test_file = Path(settings.STORAGE_PATH) / ".health_write_test"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("ok")
+        test_file.unlink()
+        storage_ok = True
+    except Exception as e:
+        storage_error = str(e)
+        overall_status = "degraded"
+    checks["storage"] = {
+        "status": "ok" if storage_ok else "fail",
+        "path": storage_path,
+        "error": storage_error,
+    }
+
+    return {
+        "status": overall_status,
+        "version": settings.APP_VERSION,
+        "timestamp": time.time(),
+        "checks": checks,
+    }
 
 
 if __name__ == "__main__":

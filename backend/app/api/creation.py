@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import threading
 
 from app.core.database import get_db
@@ -21,6 +21,29 @@ from app.schemas import (
 router = APIRouter(prefix="/creation", tags=["创作中心"])
 
 
+def _select_best_video(videos: list) -> Optional[Video]:
+    """从项目的多个 Video 中选最优展示视频。
+
+    MVP 收敛后, 视频统一由 VideoProducer 生成 (通常仅 1 条)。
+    但需兼容历史可能存在的 VideoGenerationWorkflow 占位记录 (url=None),
+    避免占位空壳覆盖真实成片。
+
+    优先级:
+      1. status in (rendered, completed) 且 url 存在 (可播放)
+      2. 任一带 url 的
+      3. created_at 最新的一条
+    """
+    if not videos:
+        return None
+    playable = [v for v in videos if v.status in ("rendered", "completed") and v.url]
+    if playable:
+        return max(playable, key=lambda v: v.created_at or 0)
+    with_url = [v for v in videos if v.url]
+    if with_url:
+        return max(with_url, key=lambda v: v.created_at or 0)
+    return max(videos, key=lambda v: v.created_at or 0)
+
+
 @router.post("/projects", response_model=ApiResponse[dict])
 def create_project(
     project_in: ContentProjectCreate,
@@ -34,6 +57,7 @@ def create_project(
 
     project = ContentProject(
         user_id=current_user.id,
+        tenant_id=current_user.tenant_id,
         source_type=project_in.source_type,
         topic=project_in.topic,
         category=project_in.category,
@@ -45,6 +69,7 @@ def create_project(
 
     task = WorkflowTask(
         project_id=project.id,
+        tenant_id=current_user.tenant_id,
         task_type="full_creation",
         status="waiting",
         progress=0,
@@ -72,6 +97,34 @@ def create_project(
     )
 
 
+def _compute_display_status(project: ContentProject, video: Optional[Video], task: Optional[WorkflowTask]) -> str:
+    """
+    计算用户可感知的统一展示状态：
+    - draft: 草稿
+    - processing: 生成中（AI创作流程进行中）
+    - plan_ready: 方案已完成（AI文案/方案就绪，等待渲染视频）
+    - rendering: 视频渲染中
+    - video_ready: 视频已完成（可播放/下载）
+    - failed: 失败
+    """
+    if project.status == "failed":
+        return "failed"
+    if project.status == "draft":
+        return "draft"
+    if project.status == "processing":
+        return "processing"
+    # completed 状态下细分
+    if project.status == "completed":
+        if video and video.status in ("rendered", "completed") and video.url:
+            return "video_ready"
+        # 视频还没渲染，或只是方案就绪
+        return "plan_ready"
+    # 其他未知状态兜底
+    if video and video.status == "rendered" and video.url:
+        return "video_ready"
+    return project.status or "draft"
+
+
 @router.get("/projects", response_model=ApiResponse[dict])
 def list_projects(
     page: int = Query(1, ge=1),
@@ -79,9 +132,13 @@ def list_projects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    query = db.query(ContentProject).filter(ContentProject.user_id == current_user.id)
+    query = db.query(ContentProject).filter(
+        ContentProject.user_id == current_user.id,
+        ContentProject.deleted_at.is_(None),
+    )
+    if current_user.tenant_id:
+        query = query.filter(ContentProject.tenant_id == current_user.tenant_id)
     total = query.count()
-    project_ids = []
     projects = (
         query.order_by(ContentProject.created_at.desc())
         .offset((page - 1) * size)
@@ -90,9 +147,18 @@ def list_projects(
     )
     project_ids = [p.id for p in projects]
     videos = {}
+    tasks = {}
     if project_ids:
+        by_project: dict = {}
         for v in db.query(Video).filter(Video.project_id.in_(project_ids)).all():
-            videos[v.project_id] = v
+            by_project.setdefault(v.project_id, []).append(v)
+        for pid, vs in by_project.items():
+            videos[pid] = _select_best_video(vs)
+        for t in db.query(WorkflowTask).filter(
+            WorkflowTask.project_id.in_(project_ids),
+            WorkflowTask.task_type == "full_creation",
+        ).all():
+            tasks[t.project_id] = t
     return ApiResponse(
         data={
             "items": [
@@ -100,6 +166,12 @@ def list_projects(
                     **ContentProjectResponse.model_validate(p).model_dump(),
                     "video_url": v.url if (v := videos.get(p.id)) else None,
                     "video_duration": v.duration if (v := videos.get(p.id)) else None,
+                    "video_status": v.status if (v := videos.get(p.id)) else None,
+                    "cover_url": v.cover_url if (v := videos.get(p.id)) else None,
+                    "display_status": _compute_display_status(
+                        p, videos.get(p.id), tasks.get(p.id)
+                    ),
+                    "error_message": t.error_message if (t := tasks.get(p.id)) else None,
                 }
                 for p in projects
             ],
@@ -110,23 +182,62 @@ def list_projects(
     )
 
 
+@router.delete("/projects/{project_id}", response_model=ApiResponse[dict])
+def delete_project(
+    project_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """软删除作品：设置 deleted_at 时间戳，不从数据库物理删除"""
+    from datetime import datetime
+    query = db.query(ContentProject).filter(
+        ContentProject.id == project_id,
+        ContentProject.user_id == current_user.id,
+        ContentProject.deleted_at.is_(None),
+    )
+    if current_user.tenant_id:
+        query = query.filter(ContentProject.tenant_id == current_user.tenant_id)
+    project = query.first()
+    if not project:
+        raise HTTPException(status_code=404, detail="项目不存在")
+    project.deleted_at = datetime.utcnow()
+    db.commit()
+    return ApiResponse(data={"success": True, "id": project_id})
+
+
 @router.get("/projects/{project_id}", response_model=ApiResponse[ContentProjectResponse])
 def get_project(
     project_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    project = (
-        db.query(ContentProject)
-        .filter(
-            ContentProject.id == project_id,
-            ContentProject.user_id == current_user.id,
-        )
-        .first()
+    query = db.query(ContentProject).filter(
+        ContentProject.id == project_id,
+        ContentProject.user_id == current_user.id,
+        ContentProject.deleted_at.is_(None),
     )
+    if current_user.tenant_id:
+        query = query.filter(ContentProject.tenant_id == current_user.tenant_id)
+    project = query.first()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
-    return ApiResponse(data=ContentProjectResponse.model_validate(project))
+    # 补全视频相关字段 (优先可播放视频, 避免历史占位记录覆盖真实成片)
+    videos = db.query(Video).filter(Video.project_id == project_id).all()
+    video = _select_best_video(videos)
+    task = db.query(WorkflowTask).filter(
+        WorkflowTask.project_id == project_id,
+        WorkflowTask.task_type == "full_creation",
+    ).first()
+    data = ContentProjectResponse.model_validate(project).model_dump()
+    if video:
+        data["video_url"] = video.url
+        data["video_duration"] = video.duration
+        data["video_status"] = video.status
+        data["cover_url"] = video.cover_url
+    data["display_status"] = _compute_display_status(project, video, task)
+    if task:
+        data["error_message"] = task.error_message
+    return ApiResponse(data=data)
 
 
 @router.get("/projects/{project_id}/scripts", response_model=ApiResponse[List[ScriptResponse]])
@@ -137,14 +248,13 @@ def get_project_scripts(
 ):
     from app.models import Script
 
-    project = (
-        db.query(ContentProject)
-        .filter(
-            ContentProject.id == project_id,
-            ContentProject.user_id == current_user.id,
-        )
-        .first()
+    query = db.query(ContentProject).filter(
+        ContentProject.id == project_id,
+        ContentProject.user_id == current_user.id,
     )
+    if current_user.tenant_id:
+        query = query.filter(ContentProject.tenant_id == current_user.tenant_id)
+    project = query.first()
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
 
@@ -165,11 +275,14 @@ def update_script_content(
     script = db.query(Script).filter(Script.id == script_id).first()
     if not script:
         raise HTTPException(status_code=404, detail="文案不存在")
-    # 校验归属: 通过 project.user_id 间接确认
-    project = db.query(ContentProject).filter(
+    # 校验归属: 通过 project.user_id + tenant_id 双重确认
+    query = db.query(ContentProject).filter(
         ContentProject.id == script.project_id,
         ContentProject.user_id == current_user.id,
-    ).first()
+    )
+    if current_user.tenant_id:
+        query = query.filter(ContentProject.tenant_id == current_user.tenant_id)
+    project = query.first()
     if not project:
         raise HTTPException(status_code=403, detail="无权限")
 

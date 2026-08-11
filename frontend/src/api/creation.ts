@@ -16,6 +16,12 @@ export interface ContentProject {
   category?: string
   status: string
   workflow_status?: string
+  video_url?: string | null
+  video_duration?: number | null
+  video_status?: string | null
+  cover_url?: string | null
+  display_status?: string
+  error_message?: string | null
   created_at: string
   updated_at: string
 }
@@ -51,14 +57,18 @@ export function createProject(source_type: string, topic: string, category?: str
 }
 
 export function listProjects(page = 1, size = 20) {
-  return request.get<unknown, PaginatedResponse<ContentProject & { video_url: string | null; video_duration: number | null }>>(
+  return request.get<unknown, PaginatedResponse<ContentProject>>(
     '/creation/projects',
     { params: { page, size } }
   )
 }
 
 export function getProjects(page = 1, size = 50) {
-  return request.get<unknown, PaginatedResponse<ContentProject & { video_url: string | null; video_duration: number | null }>>(`/creation/projects`, { params: { page, size } })
+  return request.get<unknown, PaginatedResponse<ContentProject>>(`/creation/projects`, { params: { page, size } })
+}
+
+export function deleteProject(project_id: number) {
+  return request.delete<unknown, { success: boolean }>(`/creation/projects/${project_id}`)
 }
 
 export function getProject(project_id: number) {

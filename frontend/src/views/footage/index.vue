@@ -44,11 +44,16 @@
 
       <div class="section">
         <div class="section-header">
-          <h3>我的素材 ({{ footages.length }})</h3>
+          <h3>我的素材 ({{ filteredFootages.length }})</h3>
+          <div class="source-filter">
+            <span class="filter-tab" :class="{ active: sourceFilter === 'all' }" @click="sourceFilter = 'all'">全部</span>
+            <span class="filter-tab" :class="{ active: sourceFilter === 'user_upload' }" @click="sourceFilter = 'user_upload'">我的</span>
+            <span class="filter-tab" :class="{ active: sourceFilter === 'system_demo' }" @click="sourceFilter = 'system_demo'">示例</span>
+          </div>
         </div>
 
         <div v-if="footages.length > 0" class="footage-grid">
-          <div v-for="f in footages" :key="f.id" class="footage-card">
+          <div v-for="f in filteredFootages" :key="f.id" class="footage-card">
             <div class="footage-thumb">
               <el-icon :size="32"><IVideoCamera /></el-icon>
               <span class="duration">{{ formatDuration(f.duration) }}</span>
@@ -56,13 +61,14 @@
             <div class="footage-info">
               <p class="filename">{{ f.filename }}</p>
               <div class="tags">
+                <el-tag v-if="isDemoFootage(f)" size="small" type="warning" effect="dark">示例</el-tag>
                 <el-tag v-if="f.scene" size="small" type="info">{{ f.scene }}</el-tag>
                 <el-tag v-if="f.emotion" size="small">{{ f.emotion }}</el-tag>
               </div>
             </div>
             <div class="footage-actions">
-              <el-button size="small" @click="editFootage(f)">编辑</el-button>
-              <el-button size="small" type="danger" plain @click="handleDelete(f.id)">删除</el-button>
+              <el-button size="small" :disabled="isDemoFootage(f)" @click="editFootage(f)">编辑</el-button>
+              <el-button size="small" type="danger" plain @click="handleDelete(f.id)">{{ isDemoFootage(f) ? "移除" : "删除" }}</el-button>
             </div>
           </div>
         </div>
@@ -70,6 +76,7 @@
         <div v-else class="empty-state">
           <el-empty description="还没有素材，上传第一个吧！">
             <el-button type="primary" @click="showGuide = true">查看拍摄指南</el-button>
+            <el-button @click="restoreDemo">恢复示例素材</el-button>
           </el-empty>
         </div>
       </div>
@@ -132,17 +139,38 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { IUploadFilled, IFolder, IVideoCamera } from '@/utils/icons'
 import {
   getCategories, createCategory, uploadFootage,
-  listFootages, updateFootage, deleteFootage, getSuggestShots,
+  listFootages, updateFootage, deleteFootage, getSuggestShots, restoreDemoFootages,
   type FootageCategory, type Footage, type SuggestShot,
 } from '@/api/footage'
 
 const categories = ref<FootageCategory[]>([])
 const footages = ref<Footage[]>([])
+const sourceFilter = ref<string>('all')
+
+const filteredFootages = computed(() => {
+  if (sourceFilter.value === 'all') return footages.value
+  return footages.value.filter(f => f.source_type === sourceFilter.value)
+})
+
+function isDemoFootage(f: Footage) {
+  return f.source_type === 'system_demo'
+}
+
+async function restoreDemo() {
+  try {
+    const res = await restoreDemoFootages()
+    ElMessage.success(`已恢复 ${res.restored_count} 条示例素材`)
+    loadFootages()
+  } catch (e) {
+    ElMessage.error('恢复失败')
+  }
+}
+
 const selectedCategory = ref<number | null>(null)
 const showCategoryDialog = ref(false)
 const showEditDialog = ref(false)
