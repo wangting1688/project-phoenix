@@ -10,8 +10,6 @@
 
 本文件保留仅作说明，不再被任何代码调用。请勿恢复其中的手写网络。
 """
-from __future__ import annotations
-
 if __name__ == "__main__":
     raise SystemExit(
         "lipsync_runner.py 已弃用：请使用官方 Wav2Lip inference.py "

@@ -14,8 +14,6 @@
   也避免在本机 CPU 上跑极慢的推理。
 - 本地模式（LIPSYNC_REMOTE_SSH 为空）：本机需装 torch(+cuda/CPU)、opencv、librosa、face-alignment。
 """
-from __future__ import annotations
-
 import os
 import sys
 import shlex
