@@ -132,6 +132,7 @@ frontend/components.d.ts
 # 备份与临时文件
 *.bak.*
 *.db.bak*
+.releases/
 
 # 前端构建临时/产物归档
 frontend/dist.tar.gz
