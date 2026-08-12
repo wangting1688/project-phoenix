@@ -1,0 +1,59 @@
+{
+    "version": 1,
+    "disable_existing_loggers": false,
+    "formatters": {
+        "default": {
+            "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S"
+        },
+        "access": {
+            "format": "%(asctime)s - %(levelname)s - %(client_addr)s - %(request_line)s - %(status_code)s",
+            "datefmt": "%Y-%m-%d %H:%M:%S"
+        }
+    },
+    "handlers": {
+        "default": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "default",
+            "filename": "logs/app.log",
+            "maxBytes": 10485760,
+            "backupCount": 5
+        },
+        "access": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "access",
+            "filename": "logs/access.log",
+            "maxBytes": 10485760,
+            "backupCount": 5
+        },
+        "error": {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "default",
+            "filename": "logs/error.log",
+            "maxBytes": 10485760,
+            "backupCount": 5,
+            "level": "ERROR"
+        }
+    },
+    "loggers": {
+        "": {
+            "handlers": ["default", "error"],
+            "level": "INFO"
+        },
+        "uvicorn": {
+            "handlers": ["default", "error"],
+            "level": "INFO",
+            "propagate": false
+        },
+        "uvicorn.access": {
+            "handlers": ["access"],
+            "level": "INFO",
+            "propagate": false
+        },
+        "uvicorn.error": {
+            "handlers": ["error"],
+            "level": "ERROR",
+            "propagate": false
+        }
+    }
+}
