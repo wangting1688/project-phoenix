@@ -62,8 +62,10 @@ echo "$CHANGED" | sed 's/^/    /'
 if echo "$CHANGED" | grep -qE "^(frontend/src/|frontend/public/|frontend/index.html|frontend/vite.config|frontend/package.json|frontend/tsconfig)"; then
   echo "==> [2/4] 前端源码变更, 构建 dist ..."
   cd "$FRONTEND_DIR" || { echo "!! 无法进入前端目录"; exit 1; }
-  [ -d node_modules ] || npm install
-  npx vite build 2>&1 | tail -15
+  if [ ! -d node_modules ]; then
+    npm install || { echo "!! npm install 失败"; exit 1; }
+  fi
+  npx vite build 2>&1 | tail -15 || { echo "!! 前端构建失败, 请检查 frontend 依赖/配置"; exit 1; }
   cd "$DEPLOY_DIR"
 else
   echo "==> [2/4] 前端无源码变更, 跳过 build"
