@@ -248,13 +248,17 @@ def render_video(
     if not valid_scenes:
         raise ValueError("所有素材路径都解析失败, 无可渲染输入")
 
-    # 源视频分辨率适配：源低于目标分辨率时不放大输出，避免 720p 源被强拉 1080p 发糊
+    # 分辨率一律跟随源素材，不做上采样也不做下采样。
+    # 过去只处理"源更低"的情况，于是口型中间件 1088x2336 被压回默认的
+    # 1080x1920：口型阶段辛苦保住的像素在渲染阶段又丢掉，成片依旧发糊。
+    # 现在两个方向都跟随源，只把奇数边补成偶数（libx264 要求）。
     src_meta = _probe_video_meta(Path(valid_scenes[0]["_resolved"]))
     if src_meta:
         sw, sh, _ = src_meta
-        if sw * sh < w * h:
-            w, h = sw, sh
+        if sw and sh and (sw, sh) != (w, h):
+            w, h = sw - (sw % 2), sh - (sh % 2)
             resolution = f"{w}x{h}"
+            print(f"[render] 输出分辨率跟随源素材: {resolution}")
 
     n = len(valid_scenes)
     # 每个输入先 scale 到目标分辨率, 再 concat (素材原始尺寸可能不一致)
@@ -311,13 +315,16 @@ def render_video(
     cmd += audio_args  # TTS 必须在 video inputs 之后, audio_idx 才正确
     cmd += ["-filter_complex", vf_arg]
     cmd += map_args
+    # crf 18 + preset medium：口型中间件是 9Mbps 的高质量源，
+    # 用 crf23/fast 交付会把嘴部细节再压掉一轮（实测成片掉到 2.8Mbps）。
     cmd += [
         "-c:v", "libx264",
-        "-preset", "fast",
-        "-crf", "23",
+        "-preset", "medium",
+        "-crf", "18",
         "-pix_fmt", "yuv420p",
         "-r", str(fps),
         "-s", resolution,
+        "-movflags", "+faststart",
     ]
     if has_audio and tts_audio_path and Path(tts_audio_path).exists():
         cmd += ["-c:a", "aac", "-b:a", "128k", "-shortest"]
