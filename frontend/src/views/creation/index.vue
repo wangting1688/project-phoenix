@@ -278,6 +278,18 @@
       >
         {{ currentStep === 3 ? '开始生成' : '下一步' }}
       </el-button>
+      <p
+        v-if="currentStep === 3 && !canNext && selectedFootageId === null"
+        class="footer-hint"
+      >
+        请先选择一段视频素材，再点击「开始生成」
+      </p>
+      <p
+        v-else-if="currentStep === 3 && !canNext"
+        class="footer-hint"
+      >
+        请先返回完成前序步骤（选题 / 文案 / 声音）
+      </p>
     </div>
   </div>
 </template>
@@ -528,7 +540,10 @@ const generateSteps = ref([
 
 const currentStepText = computed(() => {
   const doing = generateSteps.value.find(s => s.status === 'doing')
-  if (doing) return doing.label + '中...'
+  if (doing) {
+    if (doing.key === 'lipsync') return '正在对齐口型（约需 1 分钟，请耐心等待，不要刷新页面）...'
+    return doing.label + '中...'
+  }
   const doneCount = generateSteps.value.filter(s => s.status === 'done').length
   if (doneCount === generateSteps.value.length) return '生成完成！'
   return '准备中...'
@@ -546,6 +561,10 @@ function taskIcon(status: string) {
 const generatingFailed = ref(false)
 const failReason = ref('')
 const generationDone = ref(false)
+
+// 进行中的生成任务（刷新/离开页面后可恢复轮询，避免进度丢失）
+const activeTaskId = ref<number | null>(null)
+const generationActive = ref(false)
 
 function resetGenerateUI() {
   generatingFailed.value = false
@@ -584,6 +603,8 @@ function saveDraft() {
       selectedVoiceId: selectedVoiceId.value,
       selectedFootageId: selectedFootageId.value,
       projectId,
+      activeTaskId: activeTaskId.value,
+      generationActive: generationActive.value,
     }
     localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
   } catch (e) {
@@ -602,6 +623,8 @@ function loadDraft() {
     if (typeof d.selectedVoiceId === 'number') selectedVoiceId.value = d.selectedVoiceId
     if (typeof d.selectedFootageId === 'number') selectedFootageId.value = d.selectedFootageId
     if (typeof d.projectId === 'number') projectId = d.projectId
+    if (typeof d.activeTaskId === 'number') activeTaskId.value = d.activeTaskId
+    if (typeof d.generationActive === 'boolean') generationActive.value = d.generationActive
     if (typeof d.currentStep === 'number') currentStep.value = Math.min(d.currentStep, 3)
     return true
   } catch (e) {
@@ -627,7 +650,14 @@ const canNext = computed(() => {
     case 2:
       return selectedVoiceId.value !== null
     case 3:
-      return selectedFootageId.value !== null
+      // 不仅要选素材，生成还需要 projectId / 文案 / 声音齐全。
+      // 否则按钮「亮着但点了会因参数不全静默失败」，表现为点了没反应。
+      return (
+        projectId !== null &&
+        selectedScriptId.value !== null &&
+        selectedVoiceId.value !== null &&
+        selectedFootageId.value !== null
+      )
     default:
       return false
   }
@@ -646,6 +676,9 @@ async function nextStep() {
     try {
       const res = await createProject('custom', formData.value.topic, formData.value.industry)
       projectId = res.project_id
+      // 立即持久化 projectId：它是普通变量不在 watch 里，不主动存的话刷新后草稿里可能还是 null，
+      // 会导致素材步「开始生成」按钮因参数不全灰死无法进行下一步
+      saveDraft()
       // 切到文案步，由 pollScripts 驱动等待、加载动画与超时重试
       currentStep.value = 1
       await pollScripts()
@@ -717,7 +750,12 @@ function setStepStatus(key: string, status: string) {
 
 async function doGenerate() {
   if (!projectId || !selectedScriptId.value || !selectedVoiceId.value || !selectedFootageId.value) {
-    ElMessage.error('参数不完整')
+    const missing: string[] = []
+    if (!projectId) missing.push('项目')
+    if (!selectedScriptId.value) missing.push('文案')
+    if (!selectedVoiceId.value) missing.push('声音')
+    if (!selectedFootageId.value) missing.push('素材')
+    ElMessage.error(`生成所需参数不完整，缺少：${missing.join('、')}`)
     return
   }
 
@@ -733,6 +771,11 @@ async function doGenerate() {
       with_lipsync: true,
     })
     const taskId = res.task_id
+
+    // 记录进行中的任务，刷新/离开页面后可恢复轮询
+    activeTaskId.value = taskId
+    generationActive.value = true
+    saveDraft()
 
     // 开始轮询任务状态
     startPolling(taskId)
@@ -759,6 +802,8 @@ function startPolling(taskId: number) {
         setStepStatus('lipsync', 'pending')
         setStepStatus('render', 'pending')
         ElMessage.error(status.error_message || '生成失败')
+        generationActive.value = false
+        saveDraft()
         stopPolling()
         return
       }
@@ -774,6 +819,7 @@ function startPolling(taskId: number) {
         stopPolling()
         ElMessage.success('视频生成完成！')
         generationDone.value = true
+        generationActive.value = false
         clearDraft()
         setTimeout(() => {
           if (projectId) {
@@ -800,12 +846,29 @@ onMounted(() => {
     // 恢复后补齐对应步骤的列表数据，使已选声音/素材可见
     if (currentStep.value >= 2) loadVoices()
     if (currentStep.value >= 3) loadFootages()
+    // 兜底：恢复后若文案列表已有但未选中（草稿 selectedScriptId 丢失），自动选第一个，
+    // 否则「开始生成」按钮会因参数不全一直灰着无法进行下一步
+    if (scripts.value.length > 0 && selectedScriptId.value == null) {
+      selectedScriptId.value = scripts.value[0].id
+    }
     // 若恢复到文案步但文案尚未生成（例如离开时仍在等待），继续轮询以免空白卡死
     if (currentStep.value === 1 && scripts.value.length === 0 && projectId != null) {
       pollScripts()
     }
   }
+  // 刷新/离开页面后，若仍有进行中的生成任务，自动恢复轮询并跳结果页
+  if (generationActive.value && activeTaskId.value) {
+    resumeGeneration(activeTaskId.value)
+  }
 })
+
+// 刷新/离开页面后恢复生成进度（口型对齐约需 1 分钟，避免用户误以为卡死而刷新丢失进度）
+function resumeGeneration(taskId: number) {
+  currentStep.value = 4
+  resetGenerateUI()
+  setStepStatus('script', 'done')
+  startPolling(taskId)
+}
 
 onUnmounted(() => {
   stopPolling()
@@ -1337,5 +1400,19 @@ watch(
   font-size: 16px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   border: none;
+}
+
+.footer-hint {
+  position: absolute;
+  top: -26px;
+  left: 16px;
+  right: 16px;
+  margin: 0;
+  font-size: 12px;
+  color: #e6a23c;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

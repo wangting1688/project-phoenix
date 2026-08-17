@@ -309,7 +309,7 @@ class VideoProducer:
         custom_speaker_id: Optional[str],
     ) -> Dict[str, Any]:
         """调用 ffmpeg 渲染服务"""
-        from app.services.video_renderer import render_video
+        from app.services.video_renderer import render_video, _probe_video_meta
         from app.services.video_service import video_service
 
         # 构建简单的 plan：单段素材 + 自动字幕
@@ -321,7 +321,15 @@ class VideoProducer:
             emotion="calm",
         )
 
-        # 确保只有一段且时长匹配素材实际时长
+        # 时长对齐：scene 时长不超过素材（口型中间件/原素材）实际时长，
+        # 否则脚本预估时长 > 素材时长时，渲染尾部无画面（黑屏/静帧），口型对不上
+        meta = _probe_video_meta(footage_path)
+        if meta and meta[2]:
+            src_dur = max(1, int(meta[2]))
+            for sc in plan.get("scene_plan", []):
+                plan_dur = int(sc.get("duration") or src_dur)
+                sc["duration"] = min(plan_dur, src_dur)
+
         result = render_video(
             plan=plan,
             project_id=self.project_id,

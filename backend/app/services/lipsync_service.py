@@ -15,6 +15,7 @@
 - 本地模式（LIPSYNC_REMOTE_SSH 为空）：本机需装 torch(+cuda/CPU)、opencv、librosa、face-alignment。
 """
 import os
+import re
 import sys
 import shlex
 import subprocess
@@ -28,6 +29,9 @@ WAV2LIP_RESIZE_FACTOR = 1
 
 # 远程 GPU 机器地址（留空=本地运行；形如 root@1.2.3.4 则通过 ssh 派发）
 LIPSYNC_REMOTE_SSH = os.environ.get("LIPSYNC_REMOTE_SSH", "").strip()
+# 远程口型 HTTP 服务地址（方案A：本机 GPU worker 经反向 SSH 隧道暴露到 live:18080）
+# 形如 http://127.0.0.1:18080 则通过 HTTP 派发，优先级高于 SSH 远程
+LIPSYNC_REMOTE_HTTP = os.environ.get("LIPSYNC_REMOTE_HTTP", "").strip()
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
 
 
@@ -46,6 +50,18 @@ class LipsyncService:
     @property
     def available(self) -> bool:
         """口型同步是否可用（模型 + 运行环境都有）"""
+        if LIPSYNC_REMOTE_HTTP:
+            # HTTP 远程模式：探活远程 worker 的 /health
+            try:
+                import urllib.request
+                with urllib.request.urlopen(
+                    LIPSYNC_REMOTE_HTTP.rstrip("/") + "/health", timeout=10
+                ) as r:
+                    if r.status == 200:
+                        return True
+            except Exception as e:
+                print(f"[lipsync] 远程 HTTP 口型服务不可用: {e}")
+            return False
         if not self.checkpoint.exists():
             print(f"[lipsync] 缺少模型文件: {self.checkpoint}（请先运行 setup_lipsync_gpu.sh）")
             return False
@@ -107,7 +123,9 @@ class LipsyncService:
         output_path = Path(output_path)
 
         try:
-            if LIPSYNC_REMOTE_SSH:
+            if LIPSYNC_REMOTE_HTTP:
+                ok = self._run_remote_http(video_path, audio_path, output_path)
+            elif LIPSYNC_REMOTE_SSH:
                 ok = self._run_remote(video_path, audio_path, output_path)
             else:
                 ok = self._run_local(video_path, audio_path, output_path)
@@ -129,6 +147,33 @@ class LipsyncService:
             return False
         tmp = self.repo_dir / "temp"
         tmp.mkdir(parents=True, exist_ok=True)
+
+        # 兼容 HEVC/HDR/rotate 素材：OpenCV(cv2) 读不了 h265/10bit/HDR 视频，
+        # 会读出 0 帧导致 Wav2Lip 静默失败（成片降级用原素材 = 嘴型与音频完全对不上）。
+        # 先用 ffmpeg 转码为 h264 8bit（默认 autorotate 应用旋转），再喂给 inference。
+        transcoded = tmp / f"face_in_{os.getpid()}.mp4"
+        # 限制高度≤1280(720p 级)：超大分辨率素材(如手机 2336 高)人脸检测极慢/易卡，
+        # 720p 级在速度和口型精度间平衡最佳；并只截取到 TTS 音频时长附近
+        tc_cmd = [FFMPEG, "-y", "-loglevel", "error", "-i", str(video_path),
+                  "-vf", "scale=-2:min(1280\\,ih)"]
+        try:
+            r = subprocess.run([FFMPEG, "-i", str(audio_path)],
+                               capture_output=True, text=True, timeout=30)
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", r.stderr)
+            if m:
+                hh, mm, ss = (float(x) for x in m.groups())
+                tc_cmd += ["-t", str(min(hh * 3600 + mm * 60 + ss + 2, 60))]
+        except Exception:
+            pass
+        tc_cmd += ["-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", str(transcoded)]
+        tc = subprocess.run(
+            tc_cmd, capture_output=True, text=True, timeout=900,
+        )
+        if tc.returncode == 0 and transcoded.exists() and transcoded.stat().st_size > 0:
+            video_path = transcoded
+        else:
+            print(f"[lipsync] 输入转码失败，将尝试直接用原始文件: {tc.stderr[-200:]}")
 
         cmd = [
             sys.executable, str(inference),
@@ -211,6 +256,49 @@ class LipsyncService:
 
         subprocess.run(["ssh", remote, f"rm -rf {remote_tmp}"], capture_output=True, text=True, timeout=30)
         return True
+
+    # ------------------------------------------------------------------
+    # 远程执行（HTTP：本机 GPU worker，经反向隧道暴露）
+    # ------------------------------------------------------------------
+
+    def _run_remote_http(self, video_path: Path, audio_path: Path, output_path: Path) -> bool:
+        import urllib.request
+        import uuid
+        base = LIPSYNC_REMOTE_HTTP.rstrip("/")
+        url = base + "/sync"
+        boundary = "----phx_lipsync_%s" % uuid.uuid4().hex
+
+        def _field(name: str, filename: str, data: bytes, ctype: str) -> bytes:
+            head = (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'
+                f"Content-Type: {ctype}\r\n\r\n"
+            ).encode()
+            return head + data + b"\r\n"
+
+        try:
+            body = b"".join([
+                _field("face", "face.mp4", open(video_path, "rb").read(), "video/mp4"),
+                _field("audio", "audio.mp3", open(audio_path, "rb").read(), "audio/mpeg"),
+            ]) + f"--{boundary}--\r\n".encode()
+        except Exception as e:
+            print(f"[lipsync] 读取本地文件失败: {e}")
+            return False
+
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        try:
+            with urllib.request.urlopen(req, timeout=1800) as r:
+                data = r.read()
+            if data[:1] == b"{":  # 远程返回了错误 JSON
+                print(f"[lipsync] 远程 HTTP 返回错误: {data[:200]}")
+                return False
+            with open(output_path, "wb") as f:
+                f.write(data)
+            return True
+        except Exception as e:
+            print(f"[lipsync] 远程 HTTP 推理失败: {e}")
+            return False
 
     # ------------------------------------------------------------------
     # 批量处理：对多段素材分别做口型同步

@@ -28,6 +28,35 @@ _FONT_CANDIDATES = [
 ]
 
 
+def _probe_video_meta(fp: Path) -> Optional[Tuple[int, int, float]]:
+    """用 ffmpeg -i 探测视频分辨率与时长（无 ffprobe 环境）。
+
+    返回 (width, height, duration_sec)；失败返回 None。
+    若带 rotate:90/270 元数据（手机竖拍常见），交换宽高得到真实显示尺寸。
+    """
+    try:
+        r = subprocess.run(
+            ["ffmpeg", "-i", str(fp)],
+            capture_output=True, text=True, timeout=15,
+        )
+        err = r.stderr
+        res_m = re.search(r"(\d{2,5})x(\d{2,5})", err)
+        if not res_m:
+            return None
+        w, h = int(res_m.group(1)), int(res_m.group(2))
+        rot_m = re.search(r"rotate\s*:\s*(\d+)", err)
+        if rot_m and int(rot_m.group(1)) in (90, 270):
+            w, h = h, w
+        dur_m = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", err)
+        dur: Optional[float] = None
+        if dur_m:
+            hh, mm, ss = (float(x) for x in dur_m.groups())
+            dur = hh * 3600 + mm * 60 + ss
+        return (w, h, dur)
+    except Exception:
+        return None
+
+
 def generate_tts_mp3(text: str, output_path: Path) -> Path:
     """
     用 macOS `say` 命令生成中文 TTS, 再 ffmpeg 转 mp3 16kHz mono.
@@ -218,6 +247,14 @@ def render_video(
 
     if not valid_scenes:
         raise ValueError("所有素材路径都解析失败, 无可渲染输入")
+
+    # 源视频分辨率适配：源低于目标分辨率时不放大输出，避免 720p 源被强拉 1080p 发糊
+    src_meta = _probe_video_meta(Path(valid_scenes[0]["_resolved"]))
+    if src_meta:
+        sw, sh, _ = src_meta
+        if sw * sh < w * h:
+            w, h = sw, sh
+            resolution = f"{w}x{h}"
 
     n = len(valid_scenes)
     # 每个输入先 scale 到目标分辨率, 再 concat (素材原始尺寸可能不一致)

@@ -23,6 +23,10 @@ class Settings(BaseSettings):
 
     STORAGE_PATH: str = "./storage"
 
+    # 口型同步远程 HTTP 服务地址（方案A：本机 GPU worker 经反向 SSH 隧道暴露到 live:18080）
+    # 形如 http://127.0.0.1:18080 则 lipsync_service 通过 HTTP 派发到本机 GPU 跑 Wav2Lip
+    LIPSYNC_REMOTE_HTTP: str = ""
+
     # ===== 演示素材开关 =====
     # 新用户注册时是否自动注入系统演示素材
     DEMO_FOOTAGE_ENABLED: bool = True
