@@ -6,11 +6,11 @@
 - 用 .venv_lipsync 运行（含 torch+cu128 / cv2 / librosa / ffmpeg）
 启动： .venv_lipsync/Scripts/python.exe gpu_worker.py
 """
-import os, sys, io, tempfile, importlib.util, asyncio
+import os, sys, io, tempfile, importlib.util, asyncio, traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from fastapi import FastAPI, UploadFile, File
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 BACKEND = Path(__file__).resolve().parent           # backend/
 # 重要：ffmpeg 必须放在 ASCII 路径下。
@@ -61,7 +61,8 @@ def health():
 @app.post("/sync")
 async def sync(face: UploadFile = File(...), audio: UploadFile = File(...)):
     if not svc.available:
-        return {"error": "lipsync unavailable (check model/torch)"}, 503
+        return JSONResponse({"error": "lipsync unavailable (check model/torch)"},
+                            status_code=503)
     with tempfile.TemporaryDirectory() as td:
         vid = Path(td) / "face.mp4"
         aud = Path(td) / "audio.mp3"
@@ -69,13 +70,27 @@ async def sync(face: UploadFile = File(...), audio: UploadFile = File(...)):
         vid.write_bytes(await face.read())
         aud.write_bytes(await audio.read())
         loop = asyncio.get_running_loop()
-        res = await loop.run_in_executor(_sync_pool, lambda: svc.sync_video(vid, aud, out))
+        err = {}
+
+        def _run():
+            # 把异常文本带回调用方，否则 worker 侧的真实原因只留在本机控制台
+            try:
+                return svc.sync_video(vid, aud, out)
+            except Exception as e:
+                err["detail"] = f"{type(e).__name__}: {e}"
+                traceback.print_exc()
+                return None
+
+        res = await loop.run_in_executor(_sync_pool, _run)
         if res and Path(res).exists() and Path(res).stat().st_size > 0:
             # 在临时目录销毁前把视频读进内存，避免流式读取时文件已被删
             data = Path(res).read_bytes()
             return Response(content=data, media_type="video/mp4",
                             headers={"Content-Disposition": "attachment; filename=lipsync.mp4"})
-    return {"error": "sync failed"}, 500
+    # 必须用 JSONResponse 显式给状态码：`return dict, 500` 会被序列化成
+    # JSON 数组并返回 200，调用方会把错误响应当视频落盘（29 字节的假成片）
+    return JSONResponse({"error": "sync failed", "engine": svc.engine.name,
+                         "detail": err.get("detail", "")}, status_code=500)
 
 if __name__ == "__main__":
     import uvicorn

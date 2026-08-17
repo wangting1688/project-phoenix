@@ -36,6 +36,26 @@ LIPSYNC_REMOTE_SSH = os.environ.get("LIPSYNC_REMOTE_SSH", "").strip()
 # 形如 http://127.0.0.1:18080 则通过 HTTP 派发，优先级高于 SSH 远程
 LIPSYNC_REMOTE_HTTP = os.environ.get("LIPSYNC_REMOTE_HTTP", "").strip()
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
+# 远程 HTTP 推理超时（秒）。扩散引擎(LatentSync)单条 20 秒视频约需 9~10 分钟，
+# 且首条含模型加载，故给足余量；纯 CPU/网络异常靠 worker 侧自身超时兜底。
+LIPSYNC_HTTP_TIMEOUT = int(os.environ.get("LIPSYNC_HTTP_TIMEOUT", "3600"))
+
+
+def _looks_like_mp4(data: bytes, content_type: str = "") -> bool:
+    """判定响应体是否为真实 mp4。
+
+    历史事故：worker 失败时返回 JSON，调用方仅检查首字节 '{'，
+    而 FastAPI 把 (dict, 500) 序列化成 JSON 数组 '[...]' 且状态码 200，
+    于是错误响应被写成 .mp4（29 字节），直到渲染阶段才报 "matches no streams"。
+    """
+    if len(data) < 32:
+        return False
+    if content_type and "json" in content_type.lower():
+        return False
+    if data[:1] in (b"{", b"["):
+        return False
+    # ISO BMFF: 前 4 字节为 box size，紧随其后是 'ftyp'
+    return data[4:8] == b"ftyp"
 
 
 _engines_mod = None
@@ -288,6 +308,7 @@ class LipsyncService:
     # ------------------------------------------------------------------
 
     def _run_remote_http(self, video_path: Path, audio_path: Path, output_path: Path) -> bool:
+        import urllib.error
         import urllib.request
         import uuid
         base = LIPSYNC_REMOTE_HTTP.rstrip("/")
@@ -314,11 +335,20 @@ class LipsyncService:
         req = urllib.request.Request(url, data=body, method="POST")
         req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
         try:
-            with urllib.request.urlopen(req, timeout=1800) as r:
-                data = r.read()
-            if data[:1] == b"{":  # 远程返回了错误 JSON
-                print(f"[lipsync] 远程 HTTP 返回错误: {data[:200]}")
+            try:
+                with urllib.request.urlopen(req, timeout=LIPSYNC_HTTP_TIMEOUT) as r:
+                    data = r.read()
+                    ctype = r.headers.get("Content-Type", "")
+            except urllib.error.HTTPError as e:
+                # worker 用 4xx/5xx 表达失败，body 里带 detail
+                print(f"[lipsync] 远程 HTTP {e.code}: {e.read()[:300]}")
                 return False
+
+            if not _looks_like_mp4(data, ctype):
+                # 关键：不能把错误响应写成 .mp4，否则「假成片」会一路流到渲染阶段
+                print(f"[lipsync] 远程 HTTP 未返回视频(ctype={ctype!r}): {data[:200]}")
+                return False
+
             with open(output_path, "wb") as f:
                 f.write(data)
             return True
