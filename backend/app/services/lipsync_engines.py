@@ -29,8 +29,10 @@ from typing import Optional
 
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
 
-# 选择推理内核：wav2lip（默认，保持历史行为）/ latentsync
-LIPSYNC_ENGINE = os.environ.get("LIPSYNC_ENGINE", "wav2lip").strip().lower()
+# 选择推理内核。默认 luogen：直接复用「罗根视频生成」已验证的四阶段流水线，
+# 经用户目视确认效果达标（嘴部相对亮度 0.804 最接近真人 0.842，耗时约 8 分钟）。
+# 回退顺序建议：luogen -> latentsync（本地自研）-> wav2lip（最老，画质天花板低）。
+LIPSYNC_ENGINE = os.environ.get("LIPSYNC_ENGINE", "luogen").strip().lower()
 
 
 class LipsyncEngine:
@@ -41,6 +43,9 @@ class LipsyncEngine:
     required_fps: Optional[int] = None
     # 该引擎建议的输入最大高度（预处理层限高用）
     max_input_height: int = 1280
+    # 引擎自带完整预处理时置 True，链路层将原素材直接交给它，
+    # 避免二次转码造成额外画质损失
+    skip_preprocess: bool = False
 
     def __init__(self, storage_root: Path):
         self.storage_root = Path(storage_root)
@@ -122,19 +127,27 @@ class Wav2LipEngine(LipsyncEngine):
 # ---------------------------------------------------------------------------
 
 LATENTSYNC_ROOT = "storage/models/latentsync"
-# 默认沿用已实测验证过的 demo 参数（40 步 / guidance 2.5 = 高画质版）。
-# 想换速度可用环境变量下调，但请重新目视验证画质后再上线。
+# 参数组合来自「罗根视频生成」项目 4 轮调优后的锁定值（40 步 / guidance 1.5 / seed 1247）。
+# 注意 guidance 用 1.5 而非 2.5：更高的 guidance 会加重嘴部塑料感。
 LATENTSYNC_STEPS = int(os.environ.get("LATENTSYNC_STEPS", "40"))
-LATENTSYNC_GUIDANCE = float(os.environ.get("LATENTSYNC_GUIDANCE", "2.5"))
+LATENTSYNC_GUIDANCE = float(os.environ.get("LATENTSYNC_GUIDANCE", "1.5"))
+LATENTSYNC_SEED = int(os.environ.get("LATENTSYNC_SEED", "1247"))
 # DeepCache 跳层缓存能提速但损失嘴部细节，默认关闭
 LATENTSYNC_DEEPCACHE = os.environ.get("LATENTSYNC_DEEPCACHE", "0").strip() == "1"
+# 嘴部细节复原 + 口型动力学微调（见 lipsync_postprocess.py）。
+# 这是解决"嘴部发黑发糊"的关键步骤，默认开启；出问题可置 0 快速回退。
+LATENTSYNC_REFINE = os.environ.get("LATENTSYNC_REFINE", "1").strip() == "1"
 
 
 class LatentSyncEngine(LipsyncEngine):
     name = "latentsync"
     # pipeline 内部按 video_fps 对齐 whisper 特征与视频帧，输入必须是 25fps
     required_fps = 25
-    max_input_height = 1280
+    # 不要压到 720p 级。人脸裁剪尺寸随画面尺寸等比缩小，
+    # 压到 1280 高会让嘴部可用像素砍半（实测嘴宽 210px -> 110px），
+    # 这是"模糊"的主因。对照项目在 1080x2320 原生分辨率下输出，效果明显更好。
+    # 2400 允许常见手机竖拍（1080x2336）原样通过，只挡住 4K 以上素材。
+    max_input_height = int(os.environ.get("LATENTSYNC_MAX_H", "2400"))
 
     def __init__(self, storage_root: Path):
         super().__init__(storage_root)
@@ -257,6 +270,8 @@ class LatentSyncEngine(LipsyncEngine):
             tmp_out = Path(td) / "out.mp4"
             tmp_dir = Path(td) / "work"
             try:
+                # 固定 seed：同素材同音频可复现，便于对比参数效果
+                generator = torch.Generator(device="cuda").manual_seed(LATENTSYNC_SEED)
                 self._pipeline(
                     video_path=str(face_path),
                     audio_path=str(audio_path),
@@ -269,6 +284,7 @@ class LatentSyncEngine(LipsyncEngine):
                     height=self._resolution,
                     mask_image_path=mask_path,
                     temp_dir=str(tmp_dir),
+                    generator=generator,
                 )
             except Exception as e:
                 print(f"[lipsync:latentsync] 推理异常: {e}")
@@ -283,9 +299,241 @@ class LatentSyncEngine(LipsyncEngine):
             if not (tmp_out.exists() and tmp_out.stat().st_size > 0):
                 print("[lipsync:latentsync] 推理未产出有效文件")
                 return False
+
+            # 精修：把原素材的真实嘴部高频搬回生成帧，并补足张合幅度。
+            # 失败不致命（降级交付未精修版本），因为推理结果本身已可用。
+            final = tmp_out
+            if LATENTSYNC_REFINE:
+                try:
+                    refined = self._refine(tmp_out, face_path, Path(td))
+                    if refined and refined.exists() and refined.stat().st_size > 0:
+                        final = refined
+                except Exception as e:
+                    print(f"[lipsync:latentsync] 精修失败，交付未精修版本: {e}")
+
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(tmp_out.read_bytes())
+            output_path.write_bytes(final.read_bytes())
             return True
+
+    def _refine(self, gen_video: Path, src_video: Path, workdir: Path) -> Optional[Path]:
+        """嘴部细节复原 + 亮度校正 + 口型动力学微调，分块流式编码。"""
+        import subprocess
+        import cv2
+        import numpy as np
+
+        pp = _load_postprocess()
+
+        def _probe(fp):
+            cap = cv2.VideoCapture(str(fp))
+            fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+            n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            cap.release()
+            return fps, n
+
+        fps_gen, n_gen = _probe(gen_video)
+        fps_src, n_src = _probe(src_video)
+        print(f"[lipsync:latentsync] 精修 gen={n_gen}f@{fps_gen:.1f} src={n_src}f@{fps_src:.1f}")
+
+        # 关键点缓存到工作目录：同素材重复生成可省约 25 秒
+        lm_gen = pp.extract_landmarks(str(gen_video), str(workdir / "lm_gen.npy"), log=print)
+        lm_src = pp.extract_landmarks(str(src_video), str(workdir / "lm_src.npy"), log=print)
+
+        # 分块流式处理：全分辨率(1088x2336)下 546 帧一次驻留约 3.9GB，
+        # pipeline 里同时存在多份副本会把物理内存吃光（实测被系统杀进程，
+        # 无 traceback）。改为一次只处理 CHUNK 帧，边处理边写进编码器。
+        cap = cv2.VideoCapture(str(gen_video))
+        ok, probe_frame = cap.read()
+        if not ok:
+            cap.release()
+            print("[lipsync:latentsync] 精修读不到帧，跳过")
+            return None
+        h, w = probe_frame.shape[:2]
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+        out = workdir / "refined.mp4"
+        proc = subprocess.Popen(
+            [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+             "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}",
+             "-r", f"{fps_gen}", "-i", "pipe:0",
+             "-c:v", "libx264", "-preset", "slow", "-crf", "16",
+             "-pix_fmt", "yuv420p", str(out)],
+            stdin=subprocess.PIPE)
+
+        CHUNK = max(16, int(os.environ.get("LATENTSYNC_REFINE_CHUNK", "48")))
+        idx = 0
+        done = 0
+        try:
+            while True:
+                buf = []
+                while len(buf) < CHUNK:
+                    ok, fr = cap.read()
+                    if not ok:
+                        break
+                    buf.append(fr)
+                if not buf:
+                    break
+                lo, hi = idx, idx + len(buf)
+                sub_gen = lm_gen[lo:hi]
+                # 顺序有讲究：先补高频细节，再校亮度（低频增益，不削弱细节），
+                # 最后做几何形变，避免形变把校正后的边界又拉开。
+                quiet = lambda *a: None
+                buf = pp.restore_mouth_detail(buf, str(src_video), sub_gen, lm_src,
+                                              fps_gen, fps_src, log=quiet,
+                                              frame_offset=lo)
+                if getattr(pp, "TONE_CORRECT", False):
+                    buf = pp.correct_mouth_tone(buf, str(src_video), sub_gen, lm_src,
+                                                fps_gen, fps_src, log=quiet,
+                                                frame_offset=lo)
+                buf = pp.refine_lip_dynamics(buf, sub_gen, lm_src, log=quiet,
+                                             width_ref=lm_gen)
+                for fr in buf:
+                    proc.stdin.write(np.ascontiguousarray(fr).tobytes())
+                done += len(buf)
+                idx = hi
+                del buf
+                print(f"[lipsync:latentsync] 精修 {done} 帧", flush=True)
+        finally:
+            cap.release()
+            proc.stdin.close()
+        if proc.wait() != 0:
+            print("[lipsync:latentsync] 精修帧编码失败")
+            return None
+
+        # 精修输出无音轨，从推理产物把音频搬过来（视频流 copy，不二次转码）
+        muxed = workdir / "refined_av.mp4"
+        r = subprocess.run(
+            [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(out), "-i", str(gen_video),
+             "-map", "0:v", "-map", "1:a?",
+             "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+             "-movflags", "+faststart", str(muxed)],
+            capture_output=True, text=True)
+        if r.returncode == 0 and muxed.exists() and muxed.stat().st_size > 0:
+            return muxed
+        print(f"[lipsync:latentsync] 精修混音失败: {r.stderr[-300:]}")
+        return out
+
+
+# ---------------------------------------------------------------------------
+# Luogen：直接复用「罗根视频生成」已验证的四阶段流水线
+# ---------------------------------------------------------------------------
+
+LUOGEN_PIPELINE = os.environ.get(
+    "LUOGEN_PIPELINE", r"D:/luogen_demo/pipeline")
+LUOGEN_PY = os.environ.get(
+    "LUOGEN_PY", r"D:/luogen_demo/latentsync_env/Scripts/python.exe")
+
+
+class LuogenEngine(LipsyncEngine):
+    """把罗根项目的 run_pipeline.py 当成外部推理服务调用。
+
+    为什么不把算法再抄一遍：那套流水线（重叠滑窗推理 + 嘴部细节复原 +
+    口型动力学微调 + 交付编码）已经经过多轮参数调优和定量验证，
+    参数写死在它自己的代码里。复制过来会立刻产生两份实现，
+    以后它那边调参我们这边就落后。直接调用可以始终吃到它的最新效果。
+
+    它自带完整环境（独立 venv：torch 2.7.1 + diffusers 0.32.2 + decord），
+    与本项目的 .venv_lipsync 互不干扰。
+
+    注意：本引擎自己完成全部预处理（音频转 16k、探测 fps），
+    所以链路层不要再做限高/转码，见 skip_preprocess。
+    """
+
+    name = "luogen"
+    # 该流水线自行处理原始素材（含 HEVC/HDR），不需要链路层预处理
+    skip_preprocess = True
+    required_fps = None
+    max_input_height = 4096
+
+    @property
+    def available(self) -> bool:
+        need = [
+            Path(LUOGEN_PIPELINE) / "run_pipeline.py",
+            Path(LUOGEN_PIPELINE) / "postprocess.py",
+            Path(LUOGEN_PY),
+        ]
+        for p in need:
+            if not p.exists():
+                print(f"[lipsync:luogen] 缺少依赖: {p}")
+                return False
+        return True
+
+    def infer(self, face_path: Path, audio_path: Path, output_path: Path) -> bool:
+        import subprocess
+        import shutil
+        import uuid
+
+        pipeline_dir = Path(LUOGEN_PIPELINE)
+        # 任务名唯一化，避免并发任务互相覆盖 work/ 与 output/
+        name = f"phx_{uuid.uuid4().hex[:12]}"
+
+        # 输入必须落在 ASCII 路径：流水线内部多处用 shell 调 ffmpeg，
+        # 本项目根目录含中文会静默失败（坑#1）。
+        staging = Path(tempfile.gettempdir()) / "phx_luogen" / name
+        staging.mkdir(parents=True, exist_ok=True)
+        src_video = staging / "face.mp4"
+        src_audio = staging / "audio.wav"
+        shutil.copyfile(face_path, src_video)
+        shutil.copyfile(audio_path, src_audio)
+
+        cmd = [
+            LUOGEN_PY, "-u", "run_pipeline.py",
+            "--video", str(src_video),
+            "--audio", str(src_audio),
+            "--name", name,
+        ]
+        env = os.environ.copy()
+        env["PATH"] = str(Path(FFMPEG).parent) + os.pathsep + env.get("PATH", "")
+        # 该 venv 自带依赖，清掉可能干扰的继承变量
+        for k in ("PYTHONPATH", "PYTHONHOME"):
+            env.pop(k, None)
+
+        print(f"[lipsync:luogen] 调用外部流水线 name={name}")
+        proc = subprocess.run(
+            cmd, cwd=str(pipeline_dir), env=env,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=int(os.environ.get("LUOGEN_TIMEOUT", "7200")),
+        )
+        produced = pipeline_dir / "output" / f"{name}.mp4"
+        if not (produced.exists() and produced.stat().st_size > 0):
+            tail = (proc.stderr or proc.stdout or "")[-1500:]
+            print(f"[lipsync:luogen] 流水线未产出成片 rc={proc.returncode}\n{tail}")
+            return False
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(produced.read_bytes())
+
+        # 清理：成片已取回，中间产物体积很大（work/ 下有无损帧与原素材副本）
+        for junk in (produced, pipeline_dir / "work" / name):
+            try:
+                if junk.is_dir():
+                    shutil.rmtree(junk, ignore_errors=True)
+                else:
+                    junk.unlink()
+            except Exception:
+                pass
+        shutil.rmtree(staging, ignore_errors=True)
+        return True
+
+
+_pp_mod = None
+
+
+def _load_postprocess():
+    """加载后处理模块，兼容 gpu_worker 按路径直加载的场景。"""
+    global _pp_mod
+    if _pp_mod is None:
+        try:
+            from app.services import lipsync_postprocess as _m
+        except Exception:
+            import importlib.util
+            _p = Path(__file__).resolve().parent / "lipsync_postprocess.py"
+            _spec = importlib.util.spec_from_file_location("lipsync_postprocess", _p)
+            _m = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_m)
+        _pp_mod = _m
+    return _pp_mod
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +543,7 @@ class LatentSyncEngine(LipsyncEngine):
 _ENGINES = {
     Wav2LipEngine.name: Wav2LipEngine,
     LatentSyncEngine.name: LatentSyncEngine,
+    LuogenEngine.name: LuogenEngine,
 }
 
 _engine_cache = {}

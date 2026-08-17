@@ -12,7 +12,7 @@ $Worker  = Join-Path $Backend 'gpu_worker.py'
 
 # 推理引擎（wav2lip / latentsync）。watchdog 用 Start-Process 拉起 worker，
 # 显式在本进程环境里设定，确保重启后不会回退到默认引擎。
-if (-not $env:LIPSYNC_ENGINE) { $env:LIPSYNC_ENGINE = 'latentsync' }
+if (-not $env:LIPSYNC_ENGINE) { $env:LIPSYNC_ENGINE = 'luogen' }
 
 function Write-Log($msg){
     try {

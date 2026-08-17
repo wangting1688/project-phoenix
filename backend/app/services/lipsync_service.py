@@ -39,6 +39,40 @@ FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
 # 远程 HTTP 推理超时（秒）。扩散引擎(LatentSync)单条 20 秒视频约需 9~10 分钟，
 # 且首条含模型加载，故给足余量；纯 CPU/网络异常靠 worker 侧自身超时兜底。
 LIPSYNC_HTTP_TIMEOUT = int(os.environ.get("LIPSYNC_HTTP_TIMEOUT", "3600"))
+# 影调提升（抬暗部）。素材偏暗时开启可显著改善"发黑"观感，置 0 关闭。
+LIPSYNC_GRADE = os.environ.get("LIPSYNC_GRADE", "1").strip() == "1"
+
+
+def _probe_source(fp, ffmpeg_bin) -> dict:
+    """探测素材分辨率与是否 HDR（用 ffmpeg -i，无需 ffprobe）。"""
+    info = {}
+    try:
+        r = subprocess.run([ffmpeg_bin, "-i", str(fp)],
+                           capture_output=True, text=True, timeout=30)
+        err = r.stderr
+        m = re.search(r"Video:.*?(\d{2,5})x(\d{2,5})", err, re.S)
+        if m:
+            w, h = int(m.group(1)), int(m.group(2))
+            # 旋转信息有两种写法：老版 metadata 的 "rotate: 90"，
+            # 新版 ffmpeg 的 "Display Matrix: rotation of -90.00 degrees"。
+            # 只认前者会漏判手机竖拍素材，导致按横向高度做缩放判断。
+            deg = None
+            rot = re.search(r"rotate\s*:\s*(-?\d+)", err)
+            if rot:
+                deg = int(rot.group(1))
+            else:
+                dm = re.search(r"rotation of\s*(-?[\d.]+)\s*degrees", err)
+                if dm:
+                    deg = int(round(float(dm.group(1))))
+            if deg is not None and abs(deg) % 180 == 90:
+                w, h = h, w
+            info["rotation"] = deg or 0
+            info["width"], info["height"] = w, h
+        # HLG / PQ / bt2020 都需要色调映射后才能当 SDR 用
+        info["hdr"] = bool(re.search(r"arib-std-b67|smpte2084|bt2020", err))
+    except Exception as e:
+        print(f"[lipsync] 素材探测失败: {e}")
+    return info
 
 
 def _looks_like_mp4(data: bytes, content_type: str = "") -> bool:
@@ -195,15 +229,65 @@ class LipsyncService:
         tmp = Path(tempfile.gettempdir()) / "phx_lipsync"
         tmp.mkdir(parents=True, exist_ok=True)
 
+        # 自带预处理的引擎（如 luogen 外部流水线）直接吃原素材：
+        # 它内部会做音频规范化与探测，我们再转一遍只会多一次有损压缩。
+        if getattr(engine, "skip_preprocess", False):
+            print(f"[lipsync] 引擎={engine.name} 自带预处理，直接使用原素材")
+            try:
+                ok = engine.infer(video_path, audio_path, output_path)
+            except Exception as e:
+                print(f"[lipsync] 引擎 {engine.name} 推理异常: {e}")
+                return False
+            if not ok:
+                return False
+            if not (output_path.exists() and output_path.stat().st_size > 0):
+                print(f"[lipsync] 引擎 {engine.name} 未产出有效文件")
+                return False
+            return True
+
         # 兼容 HEVC/HDR/rotate 素材：OpenCV(cv2) 读不了 h265/10bit/HDR 视频，
-        # 会读出 0 帧导致 Wav2Lip 静默失败（成片降级用原素材 = 嘴型与音频完全对不上）。
-        # 先用 ffmpeg 转码为 h264 8bit（默认 autorotate 应用旋转），再喂给 inference。
+        # 会读出 0 帧导致推理静默失败（成片降级用原素材 = 嘴型与音频完全对不上）。
+        # 先用 ffmpeg 转码为 h264 8bit（默认 autorotate 应用旋转），再喂给引擎。
         transcoded = tmp / f"face_in_{os.getpid()}.mp4"
-        # 限制高度≤1280(720p 级)：超大分辨率素材(如手机 2336 高)人脸检测极慢/易卡，
-        # 720p 级在速度和口型精度间平衡最佳；并只截取到 TTS 音频时长附近
+        meta = _probe_source(video_path, FFMPEG)
+        vf = []
+
+        # HDR/HLG 素材必须做色调映射再转 SDR。
+        # 这条素材是 bt2020nc + arib-std-b67(HLG)，若直接按 SDR 解码，
+        # 画面整体发灰发暗（实测平均亮度 L 从 214.9 掉到 192.9），
+        # 表现就是用户反馈的"发黑发暗"。tonemap=hable 保留高光细节。
+        if meta.get("hdr"):
+            vf.append("zscale=t=linear:npl=100,tonemap=hable,"
+                      "zscale=t=bt709:m=bt709:r=tv")
+            print("[lipsync] 检测到 HDR/HLG 素材，已启用色调映射")
+
+        # 限高：过去写死 1280，把 2336 高的手机素材压掉 45% 像素，
+        # 人脸裁剪随之变小，扩散模型可用的嘴部像素被砍掉一半 —— 这是
+        # "模糊"的主因，而非模型能力。改为跟随引擎声明的上限，
+        # 且只在确实超限时才缩放（不放大小素材）。
         max_h = engine.max_input_height
+        src_h = meta.get("height") or 0
+        if src_h and src_h > max_h:
+            vf.append(f"scale=-2:{max_h}")
+            print(f"[lipsync] 素材高度 {src_h} > {max_h}，缩放至 {max_h}")
+        elif src_h:
+            print(f"[lipsync] 素材高度 {src_h} 未超限，保持原分辨率")
+
+        # 影调提升：抬暗部 + 略提饱和。
+        # 与效果达标的对照项目逐帧比对后发现，我们素材的暗部被压得更死
+        # （暗部 p5=66 vs 对照 85，皮肤亮度 169.6 vs 239.7）——这是拍摄光线
+        # 差异，不是算法问题，但观感就是"整体发暗"。这里把影调拉到与对照
+        # 相当的水平（p5≈92 / p95≈245，不过曝）。
+        # 放在推理前做，模型才会基于提亮后的画面重绘嘴部；只做后处理会导致
+        # 生成区与周围影调不一致。
+        if LIPSYNC_GRADE:
+            vf.append("eq=gamma=1.15:saturation=1.05,"
+                      "curves=all='0/0.04 0.5/0.52 1/0.96'")
+            print("[lipsync] 已启用影调提升（抬暗部）")
+
+        vf.append("format=yuv420p")
         tc_cmd = [FFMPEG, "-y", "-loglevel", "error", "-i", str(video_path),
-                  "-vf", f"scale=-2:min({max_h}\\,ih)"]
+                  "-vf", ",".join(vf)]
         # 部分引擎（LatentSync）按固定 video_fps 对齐 whisper 特征与视频帧，
         # 输入帧率不符会导致口型整体偏移，故在此统一重采样
         if engine.required_fps:
@@ -217,7 +301,10 @@ class LipsyncService:
                 tc_cmd += ["-t", str(min(hh * 3600 + mm * 60 + ss + 2, 60))]
         except Exception:
             pass
-        tc_cmd += ["-c:v", "libx264", "-preset", "fast", "-pix_fmt", "yuv420p",
+        # crf 16 + preset slow：预处理产物是推理输入，也是细节复原的纹理供体，
+        # 这一步的压缩损失会一路带到成片，不能省码率
+        tc_cmd += ["-c:v", "libx264", "-preset", "slow", "-crf", "16",
+                   "-pix_fmt", "yuv420p",
                    "-c:a", "aac", str(transcoded)]
         tc = subprocess.run(
             tc_cmd, capture_output=True, text=True, timeout=900,
