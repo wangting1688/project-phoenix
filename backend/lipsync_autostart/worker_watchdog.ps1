@@ -10,6 +10,10 @@ $Backend = 'D:\汪挺\project-Phoenix\project-phoenix\backend'
 $PyExe   = Join-Path $Backend '.venv_lipsync\Scripts\python.exe'
 $Worker  = Join-Path $Backend 'gpu_worker.py'
 
+# 推理引擎（wav2lip / latentsync）。watchdog 用 Start-Process 拉起 worker，
+# 显式在本进程环境里设定，确保重启后不会回退到默认引擎。
+if (-not $env:LIPSYNC_ENGINE) { $env:LIPSYNC_ENGINE = 'latentsync' }
+
 function Write-Log($msg){
     try {
         $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'

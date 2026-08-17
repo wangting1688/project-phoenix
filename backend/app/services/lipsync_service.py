@@ -12,20 +12,23 @@
 - 远程模式（LIPSYNC_REMOTE_SSH=user@host）：口型同步派发到 GPU 机器执行。
   本机（CPU 生产后端）只负责 scp 传文件 + ssh 调用，不依赖本机 torch/cuda，
   也避免在本机 CPU 上跑极慢的推理。
-- 本地模式（LIPSYNC_REMOTE_SSH 为空）：本机需装 torch(+cuda/CPU)、opencv、librosa、face-alignment。
+- 本地模式（LIPSYNC_REMOTE_SSH 为空）：在本机跑推理，依赖由所选引擎决定。
+
+推理内核可插拔（见 lipsync_engines.py）：
+- 本模块只负责链路（远程派发、素材预处理、失败降级），与具体模型无关；
+- 具体模型由 LIPSYNC_ENGINE 环境变量选择（wav2lip / latentsync），
+  便于低成本 A/B 对比而不改动链路代码。
 """
 import os
 import re
-import sys
 import shlex
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Optional, List
 
 WAV2LIP_CHECKPOINT = "storage/models/wav2lip_gan.pth"
 WAV2LIP_REPO_DIR = "storage/models/wav2lip"  # 官方仓库(git clone) 根目录，含 inference.py
-WAV2LIP_PADS = [0, 10, 0, 0]
-WAV2LIP_RESIZE_FACTOR = 1
 
 # 远程 GPU 机器地址（留空=本地运行；形如 root@1.2.3.4 则通过 ssh 派发）
 LIPSYNC_REMOTE_SSH = os.environ.get("LIPSYNC_REMOTE_SSH", "").strip()
@@ -35,13 +38,42 @@ LIPSYNC_REMOTE_HTTP = os.environ.get("LIPSYNC_REMOTE_HTTP", "").strip()
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
 
 
-class LipsyncService:
-    """口型同步服务封装（真实 Wav2Lip）"""
+_engines_mod = None
 
-    def __init__(self, storage_root: Path):
+
+def _load_engines():
+    """导入引擎层。
+
+    正常后端进程走包导入；gpu_worker.py 为绕开 app/__init__ 的依赖用
+    importlib 直接按路径加载本文件，此时 app 包不在 sys.path，需按路径兜底。
+    """
+    global _engines_mod
+    if _engines_mod is None:
+        try:
+            from app.services import lipsync_engines as _m
+        except Exception:
+            import importlib.util
+            _p = Path(__file__).resolve().parent / "lipsync_engines.py"
+            _spec = importlib.util.spec_from_file_location("lipsync_engines", _p)
+            _m = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_m)
+        _engines_mod = _m
+    return _engines_mod
+
+
+class LipsyncService:
+    """口型同步服务封装（链路层，推理内核可插拔）"""
+
+    def __init__(self, storage_root: Path, engine: Optional[str] = None):
         self.storage_root = Path(storage_root)
         self.checkpoint = self.storage_root / WAV2LIP_CHECKPOINT
         self.repo_dir = self.storage_root / WAV2LIP_REPO_DIR
+        self._engine_name = engine
+
+    @property
+    def engine(self):
+        """当前推理引擎（进程内单例，模型只加载一次）"""
+        return _load_engines().get_engine(self.storage_root, self._engine_name)
 
     # ------------------------------------------------------------------
     # 可用性检测
@@ -62,10 +94,10 @@ class LipsyncService:
             except Exception as e:
                 print(f"[lipsync] 远程 HTTP 口型服务不可用: {e}")
             return False
-        if not self.checkpoint.exists():
-            print(f"[lipsync] 缺少模型文件: {self.checkpoint}（请先运行 setup_lipsync_gpu.sh）")
-            return False
         if LIPSYNC_REMOTE_SSH:
+            if not self.checkpoint.exists():
+                print(f"[lipsync] 缺少模型文件: {self.checkpoint}（请先运行 setup_lipsync_gpu.sh）")
+                return False
             # 远程模式：检查远程是否有 checkpoint + inference.py + torch
             try:
                 cmd = (
@@ -84,15 +116,8 @@ class LipsyncService:
             except Exception as e:
                 print(f"[lipsync] 远程可用性检查失败: {e}")
                 return False
-        # 本地模式：需要 torch / cv2 / librosa
-        try:
-            import torch  # noqa: F401
-            import cv2  # noqa: F401
-            import librosa  # noqa: F401
-        except Exception as e:
-            print(f"[lipsync] 本地缺少依赖(torch/cv2/librosa): {e}")
-            return False
-        return True
+        # 本地模式：资产与依赖由所选推理引擎自行判定
+        return self.engine.available
 
     # ------------------------------------------------------------------
     # 主入口
@@ -141,11 +166,13 @@ class LipsyncService:
     # ------------------------------------------------------------------
 
     def _run_local(self, video_path: Path, audio_path: Path, output_path: Path) -> bool:
-        inference = self.repo_dir / "inference.py"
-        if not inference.exists():
-            print(f"[lipsync] 官方 inference.py 不存在: {inference}（请先运行 setup_lipsync_gpu.sh）")
+        engine = self.engine
+        if not engine.available:
+            print(f"[lipsync] 引擎 {engine.name} 不可用")
             return False
-        tmp = self.repo_dir / "temp"
+        # 预处理产物必须落在 ASCII 路径：cv2 与 shell=True 的 ffmpeg 调用
+        # 在 Windows 中文路径下会静默失败（坑#1）。项目根目录含中文，故用系统临时目录。
+        tmp = Path(tempfile.gettempdir()) / "phx_lipsync"
         tmp.mkdir(parents=True, exist_ok=True)
 
         # 兼容 HEVC/HDR/rotate 素材：OpenCV(cv2) 读不了 h265/10bit/HDR 视频，
@@ -154,8 +181,13 @@ class LipsyncService:
         transcoded = tmp / f"face_in_{os.getpid()}.mp4"
         # 限制高度≤1280(720p 级)：超大分辨率素材(如手机 2336 高)人脸检测极慢/易卡，
         # 720p 级在速度和口型精度间平衡最佳；并只截取到 TTS 音频时长附近
+        max_h = engine.max_input_height
         tc_cmd = [FFMPEG, "-y", "-loglevel", "error", "-i", str(video_path),
-                  "-vf", "scale=-2:min(1280\\,ih)"]
+                  "-vf", f"scale=-2:min({max_h}\\,ih)"]
+        # 部分引擎（LatentSync）按固定 video_fps 对齐 whisper 特征与视频帧，
+        # 输入帧率不符会导致口型整体偏移，故在此统一重采样
+        if engine.required_fps:
+            tc_cmd += ["-r", str(engine.required_fps)]
         try:
             r = subprocess.run([FFMPEG, "-i", str(audio_path)],
                                capture_output=True, text=True, timeout=30)
@@ -175,23 +207,17 @@ class LipsyncService:
         else:
             print(f"[lipsync] 输入转码失败，将尝试直接用原始文件: {tc.stderr[-200:]}")
 
-        cmd = [
-            sys.executable, str(inference),
-            "--checkpoint_path", str(self.checkpoint),
-            "--face", str(video_path),
-            "--audio", str(audio_path),
-            "--outfile", str(output_path),
-            "--pads", *[str(p) for p in WAV2LIP_PADS],
-            "--resize_factor", str(WAV2LIP_RESIZE_FACTOR),
-            "--wav2lip_batch_size", "128",
-            "--face_det_batch_size", "16",
-        ]
-        # 官方 inference.py 使用相对 temp/，故以仓库目录为 cwd
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=1800, cwd=str(self.repo_dir),
-        )
-        if proc.returncode != 0:
-            print(f"[lipsync] 本地推理失败 rc={proc.returncode}: {proc.stderr[-600:]}")
+        print(f"[lipsync] 引擎={engine.name} 输入={video_path.name}")
+        try:
+            ok = engine.infer(video_path, audio_path, output_path)
+        except Exception as e:
+            print(f"[lipsync] 引擎 {engine.name} 推理异常: {e}")
+            return False
+        # 不能只信返回值：历史上 Wav2Lip 的 inference.py 失败也 exit 0（坑#6）
+        if not ok:
+            return False
+        if not (output_path.exists() and output_path.stat().st_size > 0):
+            print(f"[lipsync] 引擎 {engine.name} 未产出有效文件: {output_path}")
             return False
         return True
 

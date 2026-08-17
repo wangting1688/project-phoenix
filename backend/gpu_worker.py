@@ -1,7 +1,8 @@
 """
 本机口型 GPU Worker（方案A 派发端点）
 - 监听 127.0.0.1:18080（仅本机/反向隧道可达，不暴露公网）
-- 接收 live 服务器 POST 的 face 视频 + audio 音频，调用本地 Wav2Lip 推理，返回口型对齐视频
+- 接收 live 服务器 POST 的 face 视频 + audio 音频，调用本地推理引擎，返回口型对齐视频
+- 推理内核由 LIPSYNC_ENGINE 选择（wav2lip / latentsync，见 app/services/lipsync_engines.py）
 - 用 .venv_lipsync 运行（含 torch+cu128 / cv2 / librosa / ffmpeg）
 启动： .venv_lipsync/Scripts/python.exe gpu_worker.py
 """
@@ -23,6 +24,10 @@ if not (FF / "ffmpeg.exe").exists():
     FF = BACKEND / "storage/models/ffmpeg"
 os.environ["PATH"] = str(FF) + os.pathsep + os.environ.get("PATH", "")
 os.environ["FFMPEG_BIN"] = str(FF / "ffmpeg.exe")
+
+# 本 worker 直跑本机推理：清掉远程派发变量，否则会把任务又转发出去形成回环
+os.environ.pop("LIPSYNC_REMOTE_HTTP", None)
+os.environ.pop("LIPSYNC_REMOTE_SSH", None)
 
 # 直接加载 lipsync_service（绕开 app/__init__ 的 fastapi 依赖）
 spec = importlib.util.spec_from_file_location(
@@ -50,6 +55,7 @@ def health():
     except Exception:
         pass
     return {"status": "ok", "lipsync_available": svc.available,
+            "engine": svc.engine.name,
             "cuda": cuda, "gpu": gpu}
 
 @app.post("/sync")
@@ -73,5 +79,6 @@ async def sync(face: UploadFile = File(...), audio: UploadFile = File(...)):
 
 if __name__ == "__main__":
     import uvicorn
-    print(">>> starting lipsync GPU worker on 127.0.0.1:18080 (lipsync_available=%s)" % svc.available)
+    print(">>> starting lipsync GPU worker on 127.0.0.1:18080 "
+          "(engine=%s, lipsync_available=%s)" % (svc.engine.name, svc.available))
     uvicorn.run(app, host="127.0.0.1", port=18080, log_level="info")
