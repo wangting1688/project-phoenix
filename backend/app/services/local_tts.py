@@ -38,9 +38,30 @@ from typing import Optional, Tuple
 
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
 
+
+def _cfg(name: str, default: str = "") -> str:
+    """读配置：先看环境变量，再回落到 pydantic Settings（.env 由它加载）。
+
+    本模块在两种进程里运行：本机 worker（按路径直加载，只有环境变量）
+    和线上后端（.env 经 Settings 加载，不进 os.environ）。
+    只读 os.environ 会导致线上拿不到 TTS_REMOTE_HTTP 而误判服务不可用。
+    """
+    v = os.environ.get(name)
+    if v:
+        return v.strip()
+    try:
+        from app.core.config import settings
+        v = getattr(settings, name, None)
+        if v is not None:
+            return str(v).strip()
+    except Exception:
+        pass
+    return default
+
+
 # 远程本地 TTS 服务地址（线上经反向隧道指向本机 worker）
-TTS_REMOTE_HTTP = os.environ.get("TTS_REMOTE_HTTP", "").strip()
-TTS_HTTP_TIMEOUT = int(os.environ.get("TTS_HTTP_TIMEOUT", "1800"))
+TTS_REMOTE_HTTP = _cfg("TTS_REMOTE_HTTP")
+TTS_HTTP_TIMEOUT = int(_cfg("TTS_HTTP_TIMEOUT", "1800"))
 
 # 本机 CosyVoice2 位置
 COSY_DIR = os.environ.get("COSY_DIR", r"D:/luogen_demo/CosyVoice")

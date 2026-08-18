@@ -75,8 +75,20 @@ def _is_volc_configured() -> bool:
     return bool(settings.VOLC_TTS_API_KEY) and bool(settings.VOLC_TTS_BASE_URL)
 
 
-# 本地 CosyVoice2 克隆开关（默认开启，火山退为后备）
-LOCAL_TTS_ENABLED = os.environ.get("LOCAL_TTS_ENABLED", "1").strip() == "1"
+def _local_tts_enabled() -> bool:
+    """本地 CosyVoice2 克隆开关（默认开启，火山退为后备）。
+
+    环境变量优先，其次读 Settings —— 线上是把配置写在 .env 里由
+    pydantic 加载的，不会进 os.environ，只读环境变量会永远拿到默认值。
+    """
+    v = os.environ.get("LOCAL_TTS_ENABLED")
+    if v is not None:
+        return v.strip() not in ("0", "false", "False", "")
+    try:
+        from app.core.config import settings
+        return bool(getattr(settings, "LOCAL_TTS_ENABLED", True))
+    except Exception:
+        return True
 
 
 def _is_production() -> bool:
@@ -473,7 +485,7 @@ def synthesize(db, custom_speaker_id, text, output_path, language=0,
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 1. 本地 CosyVoice2 zero-shot 克隆（首选）
-    if LOCAL_TTS_ENABLED:
+    if _local_tts_enabled():
         try:
             result = _synthesize_local_clone(
                 db, text, output_path,
