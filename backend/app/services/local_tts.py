@@ -460,8 +460,13 @@ def synthesize_remote(text: str, ref_wav, ref_text: str, out_path) -> Optional[P
     boundary = "----phx_tts_%s" % uuid.uuid4().hex
 
     def _field(name, value):
-        return (f"--{boundary}\r\nContent-Disposition: form-data; "
-                f'name="{name}"\r\n\r\n{value}\r\n').encode()
+        # 必须显式声明 charset=utf-8。中文字段若不声明，服务端按 latin-1
+        # 解码会得到乱码文本，模型照着乱码发音 —— 表现为合成"成功"但
+        # 回读相似度只有 4%，而同样的文案在本机直跑却有 84%。
+        head = (f"--{boundary}\r\nContent-Disposition: form-data; "
+                f'name="{name}"\r\n'
+                f"Content-Type: text/plain; charset=utf-8\r\n\r\n")
+        return head.encode("utf-8") + str(value).encode("utf-8") + b"\r\n"
 
     def _file(name, filename, data, ctype):
         head = (f"--{boundary}\r\nContent-Disposition: form-data; "
