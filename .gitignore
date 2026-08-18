@@ -137,3 +137,9 @@ frontend/components.d.ts
 # 前端构建临时/产物归档
 frontend/dist.tar.gz
 frontend/vite.config.ts.timestamp-*.mjs
+
+# Playwright 测试产物
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/
+frontend/.cache/

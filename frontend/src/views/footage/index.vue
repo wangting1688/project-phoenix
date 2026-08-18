@@ -192,7 +192,7 @@ async function loadData() {
       listFootages(),
     ])
     categories.value = cats || []
-    footages.value = (foots as any)?.items || []
+    footages.value = foots?.items || []
   } catch (e) {
     console.error('加载失败', e)
   }

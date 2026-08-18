@@ -46,11 +46,11 @@ export interface SuggestShot {
 }
 
 export function getCategories() {
-  return request.get('/footage/categories')
+  return request.get<unknown, FootageCategory[]>('/footage/categories')
 }
 
 export function createCategory(name: string, type: string) {
-  return request.post('/footage/categories', { name, type })
+  return request.post<unknown, FootageCategory>('/footage/categories', { name, type })
 }
 
 export function uploadFootage(file: File, categoryId?: number) {
@@ -67,8 +67,15 @@ export function checkFootageQuality(id: number) {
   return request.get<unknown, FootageQuality>(`/footage/${id}/quality`)
 }
 
+export interface FootageListResult {
+  items: Footage[]
+  total: number
+  page: number
+  size: number
+}
+
 export function listFootages(params?: { category_id?: number; scene?: string; page?: number; size?: number }) {
-  return request.get('/footage/list', { params })
+  return request.get<unknown, FootageListResult>('/footage/list', { params })
 }
 
 export function updateFootage(id: number, data: Partial<Footage>) {
@@ -80,7 +87,7 @@ export function deleteFootage(id: number) {
 }
 
 export function getSuggestShots() {
-  return request.get('/footage/suggest-shots')
+  return request.get<unknown, Record<string, SuggestShot[]>>('/footage/suggest-shots')
 }
 
 

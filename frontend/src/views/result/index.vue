@@ -302,8 +302,8 @@ import {
   ICheck, IDocument, IVideoPlay, ISetting,
 } from '@/utils/icons'
 import {
-  getTaskStatus, getTaskResult, getTaskScripts, getProject,
-  type TaskStatus, type Script, type VideoInfo,
+  getTaskStatus, getTaskResult, getTaskScripts, getProject, getProjectScripts,
+  type TaskStatus, type Script, type VideoInfo, type ContentProject,
 } from '@/api/creation'
 import { composeVideo, renderVideo, type ComposeResult } from '@/api/video'
 import { getVoiceProfiles, type VoiceProfile } from '@/api/voiceProfile'

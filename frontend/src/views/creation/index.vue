@@ -300,6 +300,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { queueHintText } from '@/utils/queue'
 import { ElMessage } from 'element-plus'
 import {
   ILoading,
@@ -558,20 +559,8 @@ const progressColor = computed(() => '#667eea')
 const queuePosition = ref<number | null>(null)
 const queueEta = ref<number | null>(null)
 
-const queueHint = computed(() => {
-  const pos = queuePosition.value
-  if (pos === null) return ''
-  const eta = queueEta.value
-  const etaText = eta && eta > 0 ? `，预计还需 ${formatEta(eta)}` : ''
-  if (pos > 0) return `前面还有 ${pos} 个任务正在处理${etaText}`
-  return eta && eta > 0 ? `正在处理${etaText}` : ''
-})
-
-function formatEta(seconds: number) {
-  if (seconds < 60) return `${seconds} 秒`
-  const m = Math.ceil(seconds / 60)
-  return `${m} 分钟`
-}
+const queueHint = computed(() =>
+  queueHintText(queuePosition.value, queueEta.value))
 
 function taskIcon(status: string) {
   if (status === 'done') return ICheck

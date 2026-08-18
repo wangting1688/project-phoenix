@@ -55,4 +55,5 @@ export const IWarning = (ElementPlusIconsVue as any).Warning
 export const IDelete = (ElementPlusIconsVue as any).Delete
 export const IDownload = (ElementPlusIconsVue as any).Download
 export const ICircleClose = (ElementPlusIconsVue as any).CircleClose
+export const ICircleCheck = (ElementPlusIconsVue as any).CircleCheck
 export const IClock = (ElementPlusIconsVue as any).Clock
