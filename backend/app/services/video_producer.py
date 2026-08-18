@@ -155,16 +155,35 @@ class VideoProducer:
             if not tts_path:
                 raise RuntimeError("配音生成失败")
 
-            # Step 3.5: 口型同步（可选，失败降级用原素材）
+            # Step 3.5: 口型同步
+            #
+            # ⚠️ 这里曾经是「失败就静默降级用原素材」，任务照样标记 completed。
+            # 后果很严重：用户拿到一个看起来正常、但嘴型和配音毫无关系的成片，
+            # 界面上没有任何提示（线上任务 33 即如此，真因是显存不足）。
+            # 口型是本产品的核心卖点，明确报失败让用户重试，
+            # 远好于交付一个不可用的成片。
             synced_footage = None
-            if params.get("with_lipsync", True):
+            lipsync_requested = bool(params.get("with_lipsync", True))
+            lipsync_error = None
+            if lipsync_requested:
                 self._update_task(task_id, "running", 45, "对齐口型")
                 try:
                     synced_footage = self._run_lipsync(footage_path, tts_path)
+                    if synced_footage is None:
+                        lipsync_error = "口型同步未产出结果"
                 except Exception as e:
-                    logger.warning("task=%s 口型同步跳过（%s），使用原素材", task_id, e)
+                    lipsync_error = f"口型同步失败：{e}"
+                    logger.exception("task=%s 口型同步失败", task_id)
 
-            # 最终用的素材路径（口型同步成功用同步后的，失败用原素材）
+                if synced_footage is None:
+                    # 不再静默降级。显存不足是最常见原因，且重试通常能成功。
+                    raise RuntimeError(
+                        f"{lipsync_error or '口型同步失败'}。"
+                        "常见原因是显卡显存被占用，请稍后重试；"
+                        "若持续失败请联系管理员查看 GPU worker 日志。"
+                    )
+
+            # 最终用的素材路径（未启用口型时用原素材）
             final_footage = synced_footage or footage_path
 
             # Step 4: 视频渲染（ffmpeg 拼接+字幕+配音）

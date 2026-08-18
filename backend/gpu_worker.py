@@ -180,6 +180,46 @@ def health():
             "inspect_available": True,
             "cuda": cuda, "gpu": gpu}
 
+def _gpu_free_mib():
+    """当前可用显存（MiB）。取不到时返回 None。"""
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return None
+        free, _total = torch.cuda.mem_get_info()
+        return int(free / 1024 / 1024)
+    except Exception:
+        return None
+
+
+def _free_gpu_for_lipsync():
+    """把显存让给口型推理。
+
+    口型是全链路最大的显存消费者（LatentSync 常驻约 20GB / 全卡 24GB），
+    而本 worker 里 face_alignment、whisper 等辅助模型也会占显存且常驻。
+    线上任务 33 就是被这些"小"占用推过临界点，报
+    cuDNN CUDNN_STATUS_INTERNAL_ERROR_HOST_ALLOCATION_FAILED 而推理失败。
+    """
+    global _fa
+    before = _gpu_free_mib()
+    # face_alignment 只服务 /inspect，口型推理时没有保留它的必要
+    if _fa is not None:
+        _fa = None
+    try:
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
+    after = _gpu_free_mib()
+    if before is not None and after is not None:
+        print(f"[lipsync] 显存让位: free {before} -> {after} MiB")
+    return after
+
+
 @app.post("/inspect")
 async def inspect(video: UploadFile = File(...)):
     """统计素材人脸占比，供上传环节的拍摄质量检测补齐这一项。
@@ -209,6 +249,18 @@ async def sync(face: UploadFile = File(...), audio: UploadFile = File(...)):
     if not svc.available:
         return JSONResponse({"error": "lipsync unavailable (check model/torch)"},
                             status_code=503)
+    # 推理前主动回收辅助模型占用的显存，避免被"小"占用挤到临界点
+    free_mib = _free_gpu_for_lipsync()
+    min_free = int(os.environ.get("LIPSYNC_MIN_FREE_MIB", "8000"))
+    if free_mib is not None and free_mib < min_free:
+        # 提前拦下比让 cuDNN 抛 HOST_ALLOCATION_FAILED 好：
+        # 那个报错信息对上层毫无指导意义，排查要翻很久日志。
+        msg = (f"显存不足：可用 {free_mib}MiB，需要至少 {min_free}MiB。"
+               "请等待当前任务结束后重试。")
+        print(f"[lipsync] {msg}")
+        return JSONResponse({"error": "insufficient gpu memory", "detail": msg},
+                            status_code=503)
+
     with tempfile.TemporaryDirectory() as td:
         vid = Path(td) / "face.mp4"
         aud = Path(td) / "audio.mp3"

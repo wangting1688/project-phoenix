@@ -250,6 +250,15 @@ def pick_reference(video_or_audio, work_dir, duration: float = 12.0,
     return best[0], best[1]
 
 
+# whisper 只用于回读校验，几秒音频的转写在 CPU 上完全够快，
+# 但它默认会占用 GPU（实测 base 模型约 976MiB 显存且不主动释放）。
+# 口型推理需要近 20GB / 全卡 24GB，这近 1GB 足以把它推过临界点 ——
+# 线上任务 33 就是这样炸的：TTS 与回读跑完，紧接着口型报
+# cuDNN CUDNN_STATUS_INTERNAL_ERROR_HOST_ALLOCATION_FAILED。
+# 故这里强制 CPU，把显存整块留给口型。可用 WHISPER_DEVICE 覆盖。
+WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
+
+
 def transcribe(audio_path, model_size: str = "base") -> str:
     """用 whisper 转写参考音频，得到逐字稿。
 
@@ -259,11 +268,29 @@ def transcribe(audio_path, model_size: str = "base") -> str:
     if ff_dir and ff_dir not in os.environ.get("PATH", ""):
         os.environ["PATH"] = ff_dir + os.pathsep + os.environ.get("PATH", "")
     import whisper
-    model = whisper.load_model(model_size)
-    res = model.transcribe(str(audio_path), language="zh", fp16=False)
-    text = re.sub(r"\s+", "", res.get("text", ""))
+    model = whisper.load_model(model_size, device=WHISPER_DEVICE)
+    try:
+        res = model.transcribe(str(audio_path), language="zh", fp16=False)
+        text = re.sub(r"\s+", "", res.get("text", ""))
+    finally:
+        # 显式释放：worker 是常驻进程，不放手就一直占着
+        del model
+        release_gpu_memory()
     print(f"[tts] ASR 转写参考音频: {text[:60]}")
     return text
+
+
+def release_gpu_memory() -> None:
+    """归还缓存显存。口型推理是显存大户，任何前置步骤都该主动让位。"""
+    try:
+        import gc
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
