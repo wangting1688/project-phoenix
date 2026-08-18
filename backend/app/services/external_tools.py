@@ -75,7 +75,7 @@ class WhisperTool(BaseTool):
                 "--verbose", "False",
             ]
 
-            result = subprocess.run(command, capture_output=True, text=True)
+            result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
             if result.returncode != 0:
                 return {"error": result.stderr}
@@ -489,7 +489,7 @@ class FFmpegTool(BaseTool):
 
             command.append(output_path)
 
-            result = subprocess.run(command, capture_output=True, text=True)
+            result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
             if result.returncode == 0 and os.path.exists(output_path):
                 return {
@@ -535,19 +535,30 @@ class FFmpegTool(BaseTool):
             os.makedirs(output_dir, exist_ok=True)
 
         # 中文字体查找
+        # 中文字体候选。SUBTITLE_FONT 可显式指定，其余按 macOS / Linux / Windows 顺序探测。
         font_candidates = [
+            os.environ.get("SUBTITLE_FONT"),
             "/System/Library/Fonts/PingFang.ttc",
             "/System/Library/Fonts/STHeiti Medium.ttc",
             "/System/Library/Fonts/Hiragino Sans GB.ttc",
             "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
             "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
             "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+            # Windows（开发机跑测试用；缺了会导致字幕被静默丢弃）
+            r"C:\Windows\Fonts\msyh.ttc",
+            r"C:\Windows\Fonts\msyh.ttf",
+            r"C:\Windows\Fonts\simhei.ttf",
         ]
         font = None
         for fc in font_candidates:
-            if os.path.exists(fc):
+            if fc and os.path.exists(fc):
                 font = fc
                 break
+        # 找不到字体时字幕会被整段丢掉，而成片仍"渲染成功"——
+        # 这种静默失败很难发现，必须留下明确信号。
+        if subtitles and not font:
+            print("[ffmpeg] 未找到中文字体，字幕将被跳过；"
+                  "可用 SUBTITLE_FONT 指定字体文件路径")
 
         n = len(valid_segments)
         input_args = []
@@ -571,10 +582,17 @@ class FFmpegTool(BaseTool):
         def _sanitize_text(text: str) -> str:
             return text.replace(chr(92), " ").replace(chr(39), " ").replace(":", "：").replace(chr(10), " ")
 
+        # drawtext 的 fontfile 在 filter_complex 里需要转义 Windows 盘符的 ":"，
+        # 否则冒号被当成滤镜选项分隔符 -> "No option name near ..."。
+        # ⚠️ 实测必须是**两个**反斜杠：滤镜串会被解析两层（先 filtergraph、
+        # 再 filter 自身），单个反斜杠在第一层就被吃掉了。
+        # 反斜杠统一换成正斜杠，ffmpeg 在 Windows 上同样接受。
+        font_arg = (font or "").replace("\\", "/").replace(":", "\\\\:")
+
         def _drawtext_filter(text: str, start_sec: float, end_sec: float) -> str:
             safe = _sanitize_text(text)
             return (
-                f"drawtext=fontfile={font}:"
+                f"drawtext=fontfile={font_arg}:"
                 f"text='{safe}':"
                 f"fontcolor=white:fontsize=64:"
                 f"box=1:boxcolor=black@0.55:boxborderw=18:"
@@ -634,7 +652,7 @@ class FFmpegTool(BaseTool):
             cmd += ["-an"]
         cmd.append(output_path)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=600)
 
         if result.returncode != 0:
             return {"error": f"ffmpeg 失败 (rc={result.returncode}): {result.stderr[-500:]}"}
@@ -648,7 +666,7 @@ class FFmpegTool(BaseTool):
             probe = subprocess.run(
                 ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                  "-of", "default=noprint_wrappers=1:nokey=1", output_path],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             if probe.returncode == 0 and probe.stdout.strip():
                 total_duration = float(probe.stdout.strip())
@@ -751,7 +769,7 @@ class AudioProcessingTool(BaseTool):
 
             command.append(output_path)
 
-            result = subprocess.run(command, capture_output=True, text=True)
+            result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace")
 
             if result.returncode == 0 and os.path.exists(output_path):
                 return {

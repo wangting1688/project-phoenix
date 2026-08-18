@@ -46,7 +46,7 @@ class TestVideoWorkflowStatus(unittest.TestCase):
         """VideoGenerationWorkflow 创建的 Video 初始状态应为 ai_plan_ready，而非 generated"""
         workflow_path = os.path.join(
             _backend_root, "app/workflow/video_workflow.py")
-        with open(workflow_path, "r") as f:
+        with open(workflow_path, "r", encoding="utf-8") as f:
             content = f.read()
 
         self.assertIn(
@@ -78,7 +78,7 @@ class TestVideoWorkflowStatus(unittest.TestCase):
         """Video 模型默认值不是 generated（避免混淆）"""
         model_path = os.path.join(
             _backend_root, "app/models/content.py")
-        with open(model_path, "r") as f:
+        with open(model_path, "r", encoding="utf-8") as f:
             content = f.read()
 
         self.assertIn('status = Column(String(50), default="generating"', content,

@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Request, HTTPException, status
 from typing import Optional, Tuple
 from fastapi.middleware.cors import CORSMiddleware
@@ -189,8 +190,15 @@ async def serve_static(file_path: str, request: Request):
         )
 
     # 2. 路径穿越防护
+    # 用 Path 关系判断而不是字符串前缀拼 "/"：后者在 Windows 上恒为 False
+    # （分隔符是 \），导致本地跑测试时所有静态资源都被误判成路径穿越。
+    # is_relative_to 同时避免 /storage 与 /storage_evil 这类前缀误匹配。
     full_path = (STORAGE_DIR / file_path).resolve()
-    if not str(full_path).startswith(str(STORAGE_DIR) + "/"):
+    try:
+        inside = full_path.is_relative_to(STORAGE_DIR)
+    except AttributeError:      # Python < 3.9
+        inside = str(full_path).startswith(str(STORAGE_DIR) + os.sep)
+    if not inside or full_path == STORAGE_DIR:
         raise HTTPException(status_code=403, detail="Forbidden")
     if not full_path.is_file():
         raise HTTPException(status_code=404, detail="Not found")
