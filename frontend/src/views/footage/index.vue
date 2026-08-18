@@ -140,12 +140,12 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElNotification } from 'element-plus'
 import { IUploadFilled, IFolder, IVideoCamera } from '@/utils/icons'
 import {
   getCategories, createCategory, uploadFootage,
   listFootages, updateFootage, deleteFootage, getSuggestShots, restoreDemoFootages,
-  type FootageCategory, type Footage, type SuggestShot,
+  type FootageCategory, type Footage, type SuggestShot, type FootageQuality,
 } from '@/api/footage'
 
 const categories = ref<FootageCategory[]>([])
@@ -209,12 +209,41 @@ async function loadSuggestShots() {
 async function handleUpload(options: any) {
   try {
     ElMessage.info('正在上传...')
-    await uploadFootage(options.file, selectedCategory.value || undefined)
-    ElMessage.success('上传成功')
+    const res = await uploadFootage(options.file, selectedCategory.value || undefined)
     loadData()
+    showQualityFeedback(res?.quality)
   } catch (e) {
     ElMessage.error('上传失败')
   }
+}
+
+/** 转义后端返回的提示文本。文案目前由后端固定生成，
+ *  但走 HTML 渲染时一律当作不可信内容处理。 */
+function escapeHtml(text: string) {
+  const div = document.createElement('div')
+  div.textContent = text
+  return div.innerHTML
+}
+
+/** 把拍摄质量检测结果告诉用户。
+ *  poor 用不自动消失的提示，避免用户没看见就去等 8 分钟的渲染。 */
+function showQualityFeedback(quality?: FootageQuality) {
+  if (!quality || !quality.warnings?.length) {
+    ElMessage.success('上传成功')
+    return
+  }
+  const isPoor = quality.level === 'poor'
+  // 用 HTML 列表而非 \n：ElNotification 不会把换行渲染成换行
+  const items = quality.warnings
+    .map(w => `<li>${escapeHtml(w)}</li>`)
+    .join('')
+  ElNotification({
+    title: isPoor ? '素材可能影响成片效果' : '上传成功，有几点建议',
+    dangerouslyUseHTMLString: true,
+    message: `<ul class="quality-tips">${items}</ul>`,
+    type: isPoor ? 'warning' : 'info',
+    duration: isPoor ? 0 : 8000,
+  })
 }
 
 async function handleCreateCategory() {

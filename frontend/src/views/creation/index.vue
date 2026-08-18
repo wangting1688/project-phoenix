@@ -222,6 +222,8 @@
             :color="progressColor"
           />
 
+          <p v-if="queueHint" class="queue-hint">{{ queueHint }}</p>
+
           <div class="step-checklist">
             <div v-for="task in generateSteps" :key="task.key" class="check-item">
               <el-icon>
@@ -551,6 +553,26 @@ const currentStepText = computed(() => {
 
 const progressColor = computed(() => '#667eea')
 
+// 排队信息：GPU 串行执行，多人同时提交时要让用户知道自己排在第几位，
+// 否则长时间不动的进度条会被当成卡死。
+const queuePosition = ref<number | null>(null)
+const queueEta = ref<number | null>(null)
+
+const queueHint = computed(() => {
+  const pos = queuePosition.value
+  if (pos === null) return ''
+  const eta = queueEta.value
+  const etaText = eta && eta > 0 ? `，预计还需 ${formatEta(eta)}` : ''
+  if (pos > 0) return `前面还有 ${pos} 个任务正在处理${etaText}`
+  return eta && eta > 0 ? `正在处理${etaText}` : ''
+})
+
+function formatEta(seconds: number) {
+  if (seconds < 60) return `${seconds} 秒`
+  const m = Math.ceil(seconds / 60)
+  return `${m} 分钟`
+}
+
 function taskIcon(status: string) {
   if (status === 'done') return ICheck
   if (status === 'doing') return ILoading
@@ -793,6 +815,9 @@ function startPolling(taskId: number) {
     try {
       const status = await getTaskStatus(taskId)
 
+      queuePosition.value = status.queue_position ?? null
+      queueEta.value = status.eta_seconds ?? null
+
       // 根据 progress 和状态映射到步骤
       const p = status.progress || 0
       if (status.status === 'failed') {
@@ -802,6 +827,8 @@ function startPolling(taskId: number) {
         setStepStatus('lipsync', 'pending')
         setStepStatus('render', 'pending')
         ElMessage.error(status.error_message || '生成失败')
+        queuePosition.value = null
+        queueEta.value = null
         generationActive.value = false
         saveDraft()
         stopPolling()
@@ -817,6 +844,8 @@ function startPolling(taskId: number) {
       if (status.status === 'completed' || p >= 100) {
         setStepStatus('render', 'done')
         stopPolling()
+        queuePosition.value = null
+        queueEta.value = null
         ElMessage.success('视频生成完成！')
         generationDone.value = true
         generationActive.value = false
@@ -898,6 +927,13 @@ watch(
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   padding: 30px 20px 24px;
   color: #fff;
+}
+
+.queue-hint {
+  margin-top: 12px;
+  font-size: 13px;
+  color: #8a8f99;
+  text-align: center;
 }
 
 .step-progress {

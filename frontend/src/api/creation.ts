@@ -50,6 +50,11 @@ export interface TaskStatus {
   progress: number
   current_step?: string
   error_message?: string
+  /** 0 = 正在执行，>0 = 前面还有几个任务在排队 */
+  queue_position?: number | null
+  queue_total?: number | null
+  /** 预计还需等待的秒数 */
+  eta_seconds?: number | null
 }
 
 export function createProject(source_type: string, topic: string, category?: string) {

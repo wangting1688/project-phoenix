@@ -77,3 +77,13 @@ img {
     padding: 16px;
   }
 }
+
+/* 素材质量提示：ElNotification 渲染在组件外，样式不能写在 scoped 里 */
+.quality-tips {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.6;
+}
+.quality-tips li + li {
+  margin-top: 6px;
+}
