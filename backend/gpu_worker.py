@@ -65,6 +65,99 @@ app = FastAPI()
 _sync_pool = ThreadPoolExecutor(max_workers=1)
 # TTS 独立线程池：合成不该被口型任务阻塞，两者显存占用差距很大
 _tts_pool = ThreadPoolExecutor(max_workers=1)
+# 素材检测：与口型同池串行。检测本身只有几秒，但和推理抢显存不划算。
+_inspect_pool = ThreadPoolExecutor(max_workers=1)
+
+# face_alignment 首次加载约 30s，加载后常驻复用（与 /tts 的模型常驻同思路）
+_fa = None
+
+
+def _get_face_aligner():
+    """按需加载并复用 face_alignment。返回 None 表示环境不支持。"""
+    global _fa
+    if _fa is not None:
+        return _fa
+    # 同 lipsync_postprocess：torch 2.11 会用 inductor 编译检测网络，
+    # 而本 venv 无 triton（Windows 无稳定 wheel）→ TritonMissing，故走 eager。
+    os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+    os.environ.setdefault("TORCH_COMPILE_DISABLE", "1")
+    try:
+        import torch
+        import face_alignment
+        try:
+            lt = face_alignment.LandmarksType.TWO_D
+        except AttributeError:
+            lt = face_alignment.LandmarksType._2D
+        dev = "cuda" if torch.cuda.is_available() else "cpu"
+        _fa = face_alignment.FaceAlignment(lt, flip_input=False, device=dev)
+        print(f"[inspect] face_alignment 已加载 device={dev}")
+        return _fa
+    except Exception as e:
+        print(f"[inspect] face_alignment 加载失败: {e}")
+        return None
+
+
+def _measure_face_ratio(video_path: Path):
+    """人脸宽度占画面宽度的比例（抽样帧取中位数）。
+
+    口型链路会把人脸裁剪缩放到 512 做推理，脸太小则嘴部有效像素不足，
+    放大贴回就会模糊——这个比例是判断「素材能否出清晰口型」的关键指标。
+
+    返回 (ratio, detected_frames, sampled_frames)；ratio 为 None 表示无法检测。
+    """
+    fa = _get_face_aligner()
+    if fa is None:
+        return None, 0, 0
+    import cv2
+    import numpy as np
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return None, 0, 0
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        width = float(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        if width <= 0:
+            return None, 0, 0
+
+        # 每 2 秒取一帧、最多 10 帧：足够稳，且不会让请求拖到分钟级
+        step = max(int(fps * 2), 1)
+        positions = [i * step for i in range(10)]
+        if total > 0:
+            positions = [p for p in positions if p < total] or [0]
+
+        ratios = []
+        sampled = 0
+        for pos in positions:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+            ok, frame = cap.read()
+            if not ok:
+                break
+            sampled += 1
+            # 缩放到长边 640 再检测：关键点精度足够，速度快数倍
+            h, w = frame.shape[:2]
+            scale = 640.0 / max(h, w) if max(h, w) > 640 else 1.0
+            small = cv2.resize(frame, None, fx=scale, fy=scale,
+                               interpolation=cv2.INTER_AREA) if scale != 1.0 else frame
+            preds = fa.get_landmarks(cv2.cvtColor(small, cv2.COLOR_BGR2RGB))
+            if not preds:
+                continue
+            # 多人时取最大脸，对应口型链路实际会选中的主体
+            best = 0.0
+            for lm in preds:
+                xs = lm[:, 0]
+                fw = (float(xs.max()) - float(xs.min())) / scale
+                best = max(best, fw / width)
+            if best > 0:
+                ratios.append(best)
+        if not ratios:
+            return 0.0, 0, sampled
+        ratios.sort()
+        return round(float(np.median(ratios)), 3), len(ratios), sampled
+    finally:
+        cap.release()
+
 
 @app.get("/health")
 def health():
@@ -84,7 +177,32 @@ def health():
     return {"status": "ok", "lipsync_available": svc.available,
             "engine": svc.engine.name,
             "tts_available": tts_ok,
+            "inspect_available": True,
             "cuda": cuda, "gpu": gpu}
+
+@app.post("/inspect")
+async def inspect(video: UploadFile = File(...)):
+    """统计素材人脸占比，供上传环节的拍摄质量检测补齐这一项。
+
+    亮度在线上用 ffmpeg 就能测（app/services/footage_quality.py），
+    但人脸检测需要模型：生产机没有 cv2，本机 cv2 5.0 headless 也没有
+    CascadeClassifier，唯一可用的 face_alignment 在本 worker 常驻，故放这里。
+    """
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / (video.filename or "in.mp4")
+        src.write_bytes(await video.read())
+        loop = asyncio.get_event_loop()
+        try:
+            ratio, detected, sampled = await loop.run_in_executor(
+                _inspect_pool, _measure_face_ratio, src)
+        except Exception as e:
+            traceback.print_exc()
+            return JSONResponse({"error": "inspect failed", "detail": str(e)},
+                                status_code=500)
+        print(f"[inspect] face_ratio={ratio} detected={detected}/{sampled}")
+        return {"face_ratio": ratio, "detected_frames": detected,
+                "sampled_frames": sampled}
+
 
 @app.post("/sync")
 async def sync(face: UploadFile = File(...), audio: UploadFile = File(...)):
