@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import time
 import json
@@ -37,6 +38,25 @@ logger = logging.getLogger(__name__)
 
 class ScriptDegradedError(RuntimeError):
     """AI 文案降级为写死模板。属于必须让用户知道的失败，不可静默继续。"""
+
+
+# 段落骨架标记：【黄金开头】【故事】【价值输出】【互动】以及
+# "第一部分：" 这类编号前缀。它们只用于组织结构，不属于口播内容。
+_MARKER_RE = re.compile(
+    r"[【\[](?:黄金开头|开头|故事|价值输出|价值|互动|结尾|钩子|第[一二三四五六]部分)[^】\]]*[】\]]"
+    r"|第[一二三四五六]部分\s*[:：]"
+)
+
+
+def _strip_structure_markers(text: str) -> str:
+    """移除文案里的结构标记，返回可直接朗读的正文。"""
+    if not text:
+        return text
+    cleaned = _MARKER_RE.sub("", text)
+    # 标记独占一行时会留下空行，顺手合并
+    cleaned = re.sub(r"\n{2,}", "\n", cleaned)
+    lines = [ln.strip() for ln in cleaned.splitlines()]
+    return "\n".join(ln for ln in lines if ln).strip()
 
 
 class VideoProducer:
@@ -289,6 +309,10 @@ class VideoProducer:
                       footage_path: Optional[Path] = None) -> Optional[Path]:
         """生成 TTS 配音，返回 mp3 路径"""
         from app.services.voice_clone import synthesize
+
+        # 大模型会按 prompt 里的结构要求输出【黄金开头】【故事】这类段落标记，
+        # 它们是给编剧看的骨架，不该被念出来（实测会被 TTS 逐字读成"黄金开头"）。
+        text = _strip_structure_markers(text)
 
         output_dir = self.storage_root / "storage" / "output"
         output_dir.mkdir(parents=True, exist_ok=True)

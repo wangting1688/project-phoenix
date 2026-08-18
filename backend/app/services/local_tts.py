@@ -181,6 +181,17 @@ def extract_reference(video_or_audio, out_wav, start: float = 0.0,
     return out_wav
 
 
+def _to_simplified(text: str) -> str:
+    """繁体转简体。缺库时原样返回，不因此让门禁失效。"""
+    if not text:
+        return text
+    try:
+        import zhconv
+        return zhconv.convert(text, "zh-cn")
+    except Exception:
+        return text
+
+
 def verify_intelligibility(audio_path, expect_text: str,
                            threshold: float = 0.55) -> Tuple[bool, float, str]:
     """用 ASR 回读合成音频，判断内容是否可辨识。
@@ -200,7 +211,14 @@ def verify_intelligibility(audio_path, expect_text: str,
         # 门禁自身故障不应拦住正常合成，放行并留下记录
         print(f"[tts] 回读校验跳过（ASR 失败: {e}）")
         return True, 1.0, ""
-    strip = lambda t: re.sub(r"[\s，。、！？；：,.!?;:\"'（）()]", "", t or "")
+
+    def strip(t):
+        t = re.sub(r"[\s，。、！？；：,.!?;:\"'（）()【】\[\]]", "", t or "")
+        # ⚠️ 必须做繁简归一：whisper 对中文常输出繁体（实测「黄金开头」→
+        # 「黃金開頭」），逐字比对会把纯字形差异当成识别错误。
+        # 同一条正常配音实测 53.3% -> 80.0%，直接决定是否被误判为失败。
+        return _to_simplified(t)
+
     want, real = strip(expect_text), strip(got)
     if not want or not real:
         return False, 0.0, got
