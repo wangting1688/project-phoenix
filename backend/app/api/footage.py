@@ -18,6 +18,7 @@ from app.schemas.footage import (
     FootageUpdate,
 )
 from app.schemas.common import ApiResponse
+from app.services.footage_quality import inspect_footage
 
 router = APIRouter(prefix="/footage", tags=["素材库"])
 
@@ -61,6 +62,27 @@ def _probe_duration(file_path: str) -> int:
         except Exception:
             pass
     return 0
+
+
+def _probe_resolution(file_path: str) -> str:
+    """提取真实分辨率。生产机没有 ffprobe，故用 ffmpeg -i 解析 stderr。"""
+    ffmpeg = _find_bin("ffmpeg")
+    if not ffmpeg:
+        return ""
+    try:
+        out = subprocess.run([ffmpeg, "-i", file_path],
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             universal_newlines=True, timeout=60)
+        # 只认 Video 流那一行，避免把封面图/缩略流的尺寸当成主画面
+        for line in (out.stderr or "").splitlines():
+            if "Video:" not in line:
+                continue
+            m = re.search(r"(\d{2,5})x(\d{2,5})", line)
+            if m:
+                return f"{m.group(1)}x{m.group(2)}"
+    except Exception:
+        pass
+    return ""
 
 
 def _generate_thumbnail(file_path: str, thumb_path: str) -> bool:
@@ -109,7 +131,7 @@ def create_category(
     return ApiResponse(data=FootageCategoryResponse.model_validate(cat))
 
 
-@router.post("/upload", response_model=ApiResponse[FootageResponse])
+@router.post("/upload", response_model=ApiResponse[dict])
 async def upload_footage(
     file: UploadFile = File(...),
     category_id: int = Form(None),
@@ -139,6 +161,13 @@ async def upload_footage(
     if _generate_thumbnail(file_path, thumb_path):
         thumb_url = f"/static/footage/{current_user.id}/{thumb_filename}"
 
+    # 拍摄质量检测：口型合成的效果上限由素材光线决定，模型补不回来。
+    # 只提示不拦截——素材也可能只用作 B-roll，不一定要走口型。
+    try:
+        quality = inspect_footage(file_path)
+    except Exception:
+        quality = None
+
     footage = Footage(
         user_id=current_user.id,
         category_id=category_id,
@@ -147,13 +176,16 @@ async def upload_footage(
         thumbnail=thumb_url,
         duration=duration,
         file_size=len(content),
-        resolution="1080x1920",
+        resolution=_probe_resolution(file_path) or "1080x1920",
         status="ready",
     )
     db.add(footage)
     db.commit()
     db.refresh(footage)
-    return ApiResponse(data=FootageResponse.model_validate(footage))
+    data = FootageResponse.model_validate(footage).model_dump()
+    if quality:
+        data["quality"] = quality
+    return ApiResponse(data=data)
 
 
 @router.get("/list", response_model=ApiResponse[dict])
@@ -243,6 +275,25 @@ def delete_footage(
     db.delete(footage)
     db.commit()
     return ApiResponse(data={"deleted": True})
+
+
+@router.get("/{footage_id}/quality", response_model=ApiResponse[dict])
+def check_footage_quality(
+    footage_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """复检已有素材的拍摄质量（上传于本功能之前的素材也能查）。"""
+    footage = (
+        db.query(Footage)
+        .filter(Footage.id == footage_id, Footage.user_id == current_user.id)
+        .first()
+    )
+    if not footage:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    if not os.path.exists(footage.file_path):
+        raise HTTPException(status_code=404, detail="素材文件已丢失")
+    return ApiResponse(data=inspect_footage(footage.file_path))
 
 
 @router.get("/suggest-shots", response_model=ApiResponse[dict])
