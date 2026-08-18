@@ -67,6 +67,8 @@ _sync_pool = ThreadPoolExecutor(max_workers=1)
 _tts_pool = ThreadPoolExecutor(max_workers=1)
 # 素材检测：与口型同池串行。检测本身只有几秒，但和推理抢显存不划算。
 _inspect_pool = ThreadPoolExecutor(max_workers=1)
+# 文案生成：几秒级任务，不能被 8 分钟的口型任务堵在队列里
+_llm_pool = ThreadPoolExecutor(max_workers=1)
 
 # face_alignment 首次加载约 30s，加载后常驻复用（与 /tts 的模型常驻同思路）
 _fa = None
@@ -178,7 +180,23 @@ def health():
             "engine": svc.engine.name,
             "tts_available": tts_ok,
             "inspect_available": True,
+            "llm_available": _ollama_ready(),
             "cuda": cuda, "gpu": gpu}
+
+def _ollama_ready() -> bool:
+    """探活本机 Ollama。只查 /api/tags，不加载模型。"""
+    try:
+        import urllib.request
+        op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        url = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
+        with op.open(url.rstrip("/") + "/api/tags", timeout=3) as r:
+            import json as _json
+            data = _json.loads(r.read().decode("utf-8", "replace"))
+        want = os.environ.get("OLLAMA_MODEL", "gemma4:26b").split(":")[0]
+        return any(want in (m.get("name") or "") for m in data.get("models", []))
+    except Exception:
+        return False
+
 
 def _gpu_free_mib():
     """当前可用显存（MiB）。取不到时返回 None。"""
@@ -242,6 +260,46 @@ async def inspect(video: UploadFile = File(...)):
         print(f"[inspect] face_ratio={ratio} detected={detected}/{sampled}")
         return {"face_ratio": ratio, "detected_frames": detected,
                 "sampled_frames": sampled}
+
+
+@app.post("/llm")
+async def llm(prompt: str = Form(...), model: str = Form(None)):
+    """本机大模型文案生成。
+
+    为什么放在这个 worker：Ollama 只在本机，线上访问不到，而本 worker 已经
+    有一条保活的反向隧道（live:18080 -> 本机）。复用它比再开一条隧道省事，
+    也省得多一套保活逻辑。
+
+    与 /sync 共用一块 GPU，但文案生成只需几秒且显存占用远小于口型推理，
+    放同一个池串行即可，不会互相挤爆。
+    """
+    spec = importlib.util.spec_from_file_location(
+        "ai_service", BACKEND / "app/services/ai_service.py")
+    try:
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        provider = mod.OllamaProvider()
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": f"ollama provider init failed: {e}"},
+                            status_code=503)
+
+    if not provider.available():
+        return JSONResponse(
+            {"error": "ollama unavailable", "detail": "服务未启动或模型未拉取"},
+            status_code=503)
+
+    loop = asyncio.get_running_loop()
+    try:
+        text = await loop.run_in_executor(
+            _llm_pool, lambda: provider.generate_content(prompt, model))
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": "llm failed", "detail": str(e)},
+                            status_code=500)
+    print(f"[llm] model={model or provider.default_model} "
+          f"prompt={len(prompt)}字 -> {len(text)}字")
+    return {"response": text}
 
 
 @app.post("/sync")

@@ -2,11 +2,15 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 import json
 import os
+import re
 import time
 import logging
 import httpx
 
-from app.core.config import settings
+try:
+    from app.core.config import settings
+except Exception:      # GPU worker 用独立 venv 加载本模块，无 pydantic_settings
+    settings = None
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +136,153 @@ class MockAIProvider(AIProvider):
         return ["mock-gpt-4", "mock-claude-3"]
 
 
+class OllamaProvider(AIProvider):
+    """本机 Ollama 大模型。
+
+    为什么需要：火山方舟的两把 key 都不可用（一把是 Agent Plan 编程套餐
+    且配额耗尽，另一把账号未开通任何文本模型），而文案是产品的核心环节，
+    不能长期依赖一个随时会断的外部服务。本机有 RTX 5090 与常驻 Ollama，
+    跑 26B~30B 模型生成中文口播完全够用，还顺带满足「数据不出本机」。
+
+    实测（script_expert 完整 prompt，要求输出结构化 JSON）：
+      gemma4:26b       12s，JSON 可解析，口语化最自然  -> 默认
+      qwen3-coder:30b   1s，速度最快但文风偏硬        -> 备选
+      deepseek-r1:32b  60s 且强制输出思维链           -> 不适合
+
+    ⚠️ 必须传 format=json：不传时模型会在 JSON 前后掺入解释文字与
+    ```json 围栏，导致上层 json.loads 直接失败（实测必现）。
+    """
+
+    def __init__(self):
+        # ⚠️ 不要在这里依赖 settings：本类会被 GPU worker 用 .venv_lipsync
+        # 单独加载，那个环境没有 pydantic_settings，导入即失败。
+        # 配置一律走环境变量，缺省值写死。
+        self.base_url = (os.environ.get("OLLAMA_URL")
+                         or "http://127.0.0.1:11434").rstrip("/")
+        self.default_model = os.environ.get("OLLAMA_MODEL", "gemma4:26b")
+        self.timeout = float(os.environ.get("OLLAMA_TIMEOUT", "600"))
+
+    def _post(self, path: str, payload: dict):
+        # 绕开系统代理：本机回环地址走代理会直接连不上
+        transport = httpx.HTTPTransport(retries=0)
+        with httpx.Client(timeout=self.timeout, trust_env=False,
+                          transport=transport) as client:
+            return client.post(self.base_url + path, json=payload)
+
+    def available(self) -> bool:
+        try:
+            with httpx.Client(timeout=5, trust_env=False) as client:
+                r = client.get(self.base_url + "/api/tags")
+            if r.status_code != 200:
+                return False
+            names = [m.get("name", "") for m in r.json().get("models", [])]
+            base = self.default_model.split(":")[0]
+            return any(base in n for n in names)
+        except Exception:
+            return False
+
+    def generate_content(self, prompt: str, model: str = None) -> str:
+        payload = {
+            "model": model or self.default_model,
+            "prompt": prompt,
+            "stream": False,
+            # 关掉思维链：推理模型会把草稿也输出，污染 JSON
+            "think": False,
+            # 强制 JSON，见类注释
+            "format": "json",
+            "options": {"temperature": 0.85, "num_predict": 2048},
+        }
+        try:
+            resp = self._post("/api/generate", payload)
+            resp.raise_for_status()
+            text = (resp.json() or {}).get("response", "").strip()
+        except Exception as e:
+            logger.error("OllamaProvider 调用失败: %s", e)
+            return json.dumps(
+                {"error": f"ollama_failed: {type(e).__name__}: {e}"},
+                ensure_ascii=False)
+
+        if not text:
+            return json.dumps({"error": "ollama_empty_response"},
+                              ensure_ascii=False)
+        # 已要求 format=json，但仍做一次容错清理（模型偶发加围栏）
+        return _strip_json_fence(text)
+
+    def get_model_list(self) -> list:
+        try:
+            with httpx.Client(timeout=10, trust_env=False) as client:
+                r = client.get(self.base_url + "/api/tags")
+            return [m.get("name") for m in r.json().get("models", [])]
+        except Exception:
+            return [self.default_model]
+
+
+class RemoteOllamaProvider(AIProvider):
+    """线上后端 -> 反向隧道 -> 本机 GPU worker 的 /llm 端点。
+
+    Ollama 只跑在本机（生产服务器没有 GPU），而 worker 已经有一条保活隧道，
+    所以复用它，不再单独暴露 11434 端口。
+    与 local_tts 的远程派发同一个思路与同一条通道。
+    """
+
+    def __init__(self):
+        self.base_url = (os.environ.get("LLM_REMOTE_HTTP")
+                         or getattr(settings, "LLM_REMOTE_HTTP", None)
+                         or getattr(settings, "TTS_REMOTE_HTTP", None)
+                         or "").rstrip("/")
+        self.model = (os.environ.get("OLLAMA_MODEL")
+                      or getattr(settings, "OLLAMA_MODEL", None) or "")
+        self.timeout = float(os.environ.get("LLM_HTTP_TIMEOUT", "900"))
+        if not self.base_url:
+            raise ValueError("LLM_REMOTE_HTTP / TTS_REMOTE_HTTP 未配置")
+
+    def available(self) -> bool:
+        try:
+            with httpx.Client(timeout=8, trust_env=False) as c:
+                r = c.get(self.base_url + "/health")
+            return r.status_code == 200 and bool(r.json().get("llm_available"))
+        except Exception as e:
+            logger.warning("远程 LLM 探活失败: %s", e)
+            return False
+
+    def generate_content(self, prompt: str, model: str = None) -> str:
+        data = {"prompt": prompt}
+        if model or self.model:
+            data["model"] = model or self.model
+        try:
+            with httpx.Client(timeout=self.timeout, trust_env=False) as c:
+                r = c.post(self.base_url + "/llm", data=data)
+            if r.status_code != 200:
+                logger.error("远程 LLM HTTP %s: %s", r.status_code, r.text[:200])
+                return json.dumps(
+                    {"error": f"remote_llm_http_{r.status_code}"},
+                    ensure_ascii=False)
+            text = (r.json() or {}).get("response", "").strip()
+        except Exception as e:
+            logger.error("远程 LLM 调用失败: %s", e)
+            return json.dumps({"error": f"remote_llm_failed: {type(e).__name__}"},
+                              ensure_ascii=False)
+        if not text:
+            return json.dumps({"error": "remote_llm_empty"}, ensure_ascii=False)
+        return _strip_json_fence(text)
+
+    def get_model_list(self) -> list:
+        return [self.model] if self.model else []
+
+
+def _strip_json_fence(text: str) -> str:
+    """剥掉 ```json 围栏与 JSON 前后的解说文字，尽量交出可解析的 JSON。"""
+    t = text.strip()
+    if t.startswith("```"):
+        t = re.sub(r"^```[a-zA-Z]*\s*", "", t)
+        t = re.sub(r"\s*```$", "", t)
+    # 只截取最外层花括号，丢掉模型自作主张的前后说明
+    start, end = t.find("{"), t.rfind("}")
+    if start != -1 and end > start:
+        return t[start:end + 1]
+    return t
+
+
 class _RetryableHTTPError(Exception):
     """可重试的 HTTP 状态（限流与服务端错误）。"""
 
@@ -251,6 +402,8 @@ class AIService:
     PROVIDERS = {
         "mock": MockAIProvider,
         "ark": ArkProvider,
+        "ollama": OllamaProvider,
+        "remote_ollama": RemoteOllamaProvider,
     }
 
     def __init__(self, provider: str = None, model: str = None):

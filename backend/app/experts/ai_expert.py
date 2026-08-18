@@ -145,17 +145,59 @@ class MockAIProvider:
 
 class AIExpertService:
     def __init__(self, ai_provider=None):
-        # 默认按 settings.AI_PROVIDER 选择真实 provider, 失败/降级时回退到内置 mock
+        # 按 settings.AI_PROVIDER 选择真实 provider。
+        # 顺序很关键：云端(ark) 不可用时自动回落本机 Ollama，
+        # 只有两者都不行才用 mock 模板 —— 而模板会被上层判定为失败。
         if ai_provider is None:
-            try:
-                from app.core.config import settings
-                if settings.AI_PROVIDER == "ark":
-                    from app.services.ai_service import ArkProvider
-                    ai_provider = ArkProvider()
-            except Exception:
-                ai_provider = None
+            ai_provider = self._build_provider()
         self._mock = MockAIProvider()
         self.ai_provider = ai_provider or self._mock
+
+    @staticmethod
+    def _build_provider():
+        """按配置构建 provider，带本地回落。"""
+        try:
+            from app.core.config import settings
+            name = (settings.AI_PROVIDER or "mock").lower()
+        except Exception:
+            return None
+
+        if name in ("ollama", "remote_ollama"):
+            return AIExpertService._try_local_llm(prefer_remote=(name == "remote_ollama"))
+
+        if name == "ark":
+            try:
+                from app.services.ai_service import ArkProvider
+                return ArkProvider()
+            except Exception as e:
+                logger.error("ArkProvider 初始化失败: %s", e)
+            # 云端配置有问题时，本机模型远比写死的模板文案有用
+            fallback = AIExpertService._try_local_llm(prefer_remote=True)
+            if fallback is not None:
+                logger.warning("Ark 不可用，已回落到本地大模型")
+            return fallback
+        return None
+
+    @staticmethod
+    def _try_local_llm(prefer_remote: bool = True):
+        """构建本地大模型 provider。
+
+        线上没有 GPU，只能经反向隧道调本机 worker（remote）；
+        在本机开发时直连 Ollama（local）更快。两者都试，谁通用谁。
+        """
+        from app.services.ai_service import OllamaProvider, RemoteOllamaProvider
+        order = ([RemoteOllamaProvider, OllamaProvider] if prefer_remote
+                 else [OllamaProvider, RemoteOllamaProvider])
+        for cls in order:
+            try:
+                p = cls()
+                if p.available():
+                    logger.info("使用本地大模型 provider: %s", cls.__name__)
+                    return p
+            except Exception as e:
+                logger.warning("%s 不可用: %s", cls.__name__, e)
+        logger.error("本地大模型均不可用（Ollama 未启动 / 隧道不通）")
+        return None
 
     def _safe_generate(self, prompt: str) -> Dict[str, Any]:
         """调用真实 provider，失败时降级到 mock 模板。

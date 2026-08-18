@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     ARK_API_KEY: Optional[str] = None
     ARK_MODEL: Optional[str] = None
     ARK_TIMEOUT: int = 120
+    # 本机 Ollama（AI_PROVIDER=ollama 时启用，也作为 ark 不可用时的回落）
+    OLLAMA_URL: Optional[str] = None
+    OLLAMA_MODEL: Optional[str] = None
+    OLLAMA_TIMEOUT: int = 600
+    # 线上经反向隧道调本机 worker 的 /llm（缺省复用 TTS_REMOTE_HTTP 同一条隧道）
+    LLM_REMOTE_HTTP: Optional[str] = None
 
     # 火山方舟豆包语音 TTS (Voice Cloning) — 独立新账号
     # 鉴权: 训练/合成都用 X-Api-Key header (新控制台)
