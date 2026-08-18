@@ -158,17 +158,31 @@ class AIExpertService:
         self.ai_provider = ai_provider or self._mock
 
     def _safe_generate(self, prompt: str) -> Dict[str, Any]:
-        """调用真实 provider, 失败/超时时降级到 mock (产品级容灾, UI 始终有内容可看)"""
+        """调用真实 provider，失败时降级到 mock 模板。
+
+        ⚠️ mock 返回的是**写死的模板文案**（只替换 {topic}，评分还是随机数）。
+        降级本身是有意的容灾，但必须让上层知道 —— 否则用户看到的是
+        "AI 生成的文案"其实每次都一样，表现为「文案不是实时创作的」。
+        所以这里在结果里打 _degraded 标记，由调用方决定是报错还是提示。
+        """
         try:
             result = self.ai_provider.generate_content(prompt)
             data = json.loads(result)
             if "error" in data:
-                logger.warning("AI provider 失败, 降级 mock: %s", data["error"])
-                return json.loads(self._mock.generate_content(prompt))
+                logger.error("AI provider 失败，降级为模板文案: %s", data["error"])
+                return self._mock_with_flag(prompt, str(data["error"]))
             return data
         except Exception as e:
-            logger.warning("AI provider 异常, 降级 mock: %s", e)
-            return json.loads(self._mock.generate_content(prompt))
+            logger.exception("AI provider 异常，降级为模板文案")
+            return self._mock_with_flag(prompt, f"{type(e).__name__}: {e}")
+
+    def _mock_with_flag(self, prompt: str, reason: str) -> Dict[str, Any]:
+        """返回模板内容，并标记这是降级结果而非真实生成。"""
+        data = json.loads(self._mock.generate_content(prompt))
+        if isinstance(data, dict):
+            data["_degraded"] = True
+            data["_degraded_reason"] = reason
+        return data
 
     def content_expert(self, topic: str, user_profile: str = "") -> Dict[str, Any]:
         prompt = PromptLoader.load_prompt("content_expert")

@@ -35,6 +35,10 @@ from app.models.content import ContentProject, WorkflowTask, Script, Video
 logger = logging.getLogger(__name__)
 
 
+class ScriptDegradedError(RuntimeError):
+    """AI 文案降级为写死模板。属于必须让用户知道的失败，不可静默继续。"""
+
+
 class VideoProducer:
     """短视频生产编排器"""
 
@@ -236,6 +240,23 @@ class VideoProducer:
         try:
             from app.experts.ai_expert import AIExpertService
             ai_result = AIExpertService().script_expert(topic, {})
+            # AI 不可用时 ai_expert 会降级返回写死的模板文案（只替换 topic）。
+            # 交付这种文案等于骗用户：每条视频的口播内容都一样。
+            # 宁可明确失败让用户重试，也不要产出一条无法使用的成片。
+            if ai_result.get("_degraded"):
+                reason = ai_result.get("_degraded_reason") or "AI 服务不可用"
+                logger.error("task=%s 文案生成降级为模板，拒绝使用: %s", task_id, reason)
+                # 配额耗尽是最常见原因，且用户自己无法通过重试解决，
+                # 必须直说而不是给一句含糊的"服务不可用"。
+                if "quota" in reason.lower():
+                    raise ScriptDegradedError(
+                        "文案生成失败：AI 服务配额已用尽，无法实时创作文案。"
+                        "请充值/升级方舟套餐，或等待配额重置后重试。"
+                    )
+                raise ScriptDegradedError(
+                    f"文案生成失败：AI 服务暂时不可用（{reason}）。"
+                    "请稍后重试；若持续失败请检查 AI 配额与配置。"
+                )
             content = ai_result.get("story_version") or ai_result.get("knowledge_version")
             if not content:
                 logger.warning("task=%s 文案生成返回空: %s", task_id, ai_result.get("error"))
@@ -256,6 +277,10 @@ class VideoProducer:
             self.db.refresh(script)
             logger.info("task=%s 生成文案成功 script_id=%s topic=%s", task_id, script.id, topic)
             return script
+        except ScriptDegradedError:
+            # 明确的业务失败（AI 降级为模板），必须上抛让任务失败并告知用户，
+            # 不能被这里的兜底 except 吞成 None 而后续静默继续。
+            raise
         except Exception as e:
             logger.error("task=%s 文案生成异常: %s", task_id, e)
             return None

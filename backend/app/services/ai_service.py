@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 import json
+import os
 import time
 import logging
 import httpx
@@ -131,6 +132,33 @@ class MockAIProvider(AIProvider):
         return ["mock-gpt-4", "mock-claude-3"]
 
 
+class _RetryableHTTPError(Exception):
+    """可重试的 HTTP 状态（限流与服务端错误）。"""
+
+    def __init__(self, status_code: int, retry_after=None):
+        super().__init__(f"HTTP {status_code}")
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+
+class AIQuotaExceededError(Exception):
+    """配额耗尽。与限流不同：重试没有意义，必须换 key 或等配额重置。"""
+
+
+def _quota_exceeded(resp) -> Optional[str]:
+    """识别配额耗尽。火山方舟用 429 同时表达「限流」与「配额用尽」，
+    但后者重试毫无意义（实测 4 次退避白等 15s），必须区分开。"""
+    try:
+        err = (resp.json() or {}).get("error") or {}
+    except Exception:
+        return None
+    code = str(err.get("code") or "")
+    msg = str(err.get("message") or "")
+    if "QuotaExceeded" in code or "quota" in msg.lower():
+        return msg or code
+    return None
+
+
 class ArkProvider(AIProvider):
     """火山方舟 Agent Plan (OpenAI 兼容 Responses API)."""
 
@@ -139,6 +167,9 @@ class ArkProvider(AIProvider):
         self.api_key = settings.ARK_API_KEY
         self.default_model = settings.ARK_MODEL or "ark-code-latest"
         self.timeout = settings.ARK_TIMEOUT
+        # 限流场景下 2 次、间隔 1s 远远不够，实测直连成功但经本 provider 却 429
+        self.max_attempts = int(os.environ.get("ARK_MAX_ATTEMPTS", "4"))
+        self.retry_base_delay = float(os.environ.get("ARK_RETRY_BASE_DELAY", "2"))
         if not self.base_url or not self.api_key:
             raise ValueError("ARK_BASE_URL / ARK_API_KEY 未配置")
 
@@ -152,11 +183,22 @@ class ArkProvider(AIProvider):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+        # 重试策略：原实现只重试 1 次且固定 sleep(1)，对 429 限流几乎无效 ——
+        # 两次请求间隔太短会继续撞在限流窗口里，结果整条链路降级到 mock，
+        # 用户拿到的是写死的模板文案（表现为"文案不是实时创作的"）。
+        # 现在区分限流与其他错误：429/5xx 做指数退避并尊重 Retry-After。
         last_err: Optional[Exception] = None
-        for attempt in range(2):
+        for attempt in range(self.max_attempts):
             try:
                 with httpx.Client(timeout=self.timeout) as client:
                     resp = client.post(url, headers=headers, json=payload)
+                if resp.status_code == 429:
+                    quota_msg = _quota_exceeded(resp)
+                    if quota_msg:
+                        raise AIQuotaExceededError(quota_msg)
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    raise _RetryableHTTPError(resp.status_code,
+                                              resp.headers.get("Retry-After"))
                 resp.raise_for_status()
                 data = resp.json()
                 # Responses API: output[].content[].text (type=output_text)
@@ -167,14 +209,39 @@ class ArkProvider(AIProvider):
                                 return c.get("text", "")
                 # 兜底: 返回原始 JSON 字符串, 让上层 json.loads 尝试解析
                 return json.dumps(data, ensure_ascii=False)
+            except AIQuotaExceededError as e:
+                # 配额耗尽，重试只会白等。直接返回，让上层给出准确提示。
+                logger.error("Ark 配额耗尽，无法生成内容: %s", e)
+                return json.dumps(
+                    {"error": f"ai_quota_exceeded: {e}"}, ensure_ascii=False)
             except Exception as e:
                 last_err = e
-                if attempt == 0:
-                    time.sleep(1)
+                if attempt < self.max_attempts - 1:
+                    delay = self._retry_delay(e, attempt)
+                    logger.warning(
+                        "ArkProvider 第 %s/%s 次失败(%s)，%.1fs 后重试",
+                        attempt + 1, self.max_attempts, type(e).__name__, delay)
+                    time.sleep(delay)
                     continue
-                logger.warning("ArkProvider 调用失败 (2 次), 让上层降级 mock: %s", e)
-                return json.dumps({"error": f"ark_provider_failed: {type(e).__name__}"}, ensure_ascii=False)
-        return json.dumps({"error": "ark_provider_unreachable"}, ensure_ascii=False)
+                logger.error(
+                    "ArkProvider 调用失败 (%s 次)，将降级为模板文案: %s",
+                    self.max_attempts, e)
+                return json.dumps(
+                    {"error": f"ark_provider_failed: {type(e).__name__}: {e}"},
+                    ensure_ascii=False)
+        return json.dumps({"error": f"ark_provider_unreachable: {last_err}"},
+                          ensure_ascii=False)
+
+    def _retry_delay(self, err: Exception, attempt: int) -> float:
+        """退避时长。限流优先按服务端 Retry-After，否则指数退避加抖动。"""
+        import random
+        if isinstance(err, _RetryableHTTPError) and err.retry_after:
+            try:
+                return min(float(err.retry_after), 30.0)
+            except (TypeError, ValueError):
+                pass
+        base = self.retry_base_delay * (2 ** attempt)
+        return min(base + random.uniform(0, 0.5), 30.0)
 
     def get_model_list(self) -> list:
         return [self.default_model]
