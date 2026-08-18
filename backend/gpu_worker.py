@@ -166,6 +166,43 @@ async def tts(text: str = Form(...), ref_text: str = Form(""),
                         status_code=500)
 
 
+@app.on_event("startup")
+async def _warmup():
+    """后台预热 CosyVoice2。
+
+    首个请求要加载 5.4GB 权重（约 3 分钟），期间调用方容易先超时而失败。
+    启动即在后台加载，让第一个真实任务直接命中已就绪的模型。
+    口型模型不在这里预热：它占近 20GB 显存，且 luogen 引擎是子进程模式。
+    """
+    if _tts is None:
+        return
+
+    def _go():
+        # 合成跑在 CosyVoice2 自己的解释器（子进程）里，模型随子进程结束而释放，
+        # 所以这里不做"预加载常驻"——那对子进程模式无效。
+        # 只做一次依赖自检，把环境问题在启动阶段就暴露出来，
+        # 而不是等第一个真实任务失败才发现。
+        try:
+            import subprocess
+            r = subprocess.run(
+                [_tts.COSY_PY, "-c",
+                 "import sys;"
+                 f"sys.path.insert(0, r'{_tts.COSY_DIR}/third_party/Matcha-TTS');"
+                 f"sys.path.insert(0, r'{_tts.COSY_DIR}');"
+                 "from cosyvoice.cli.cosyvoice import CosyVoice2;"
+                 "print('ok')"],
+                capture_output=True, text=True, timeout=180)
+            if "ok" in (r.stdout or ""):
+                print("[warmup] CosyVoice2 依赖自检通过")
+            else:
+                print(f"[warmup] CosyVoice2 依赖自检失败: "
+                      f"{(r.stderr or r.stdout or '')[-300:]}")
+        except Exception as e:
+            print(f"[warmup] CosyVoice2 自检异常: {e}")
+
+    asyncio.get_running_loop().run_in_executor(_tts_pool, _go)
+
+
 if __name__ == "__main__":
     import uvicorn
     print(">>> starting GPU worker on 127.0.0.1:18080 "

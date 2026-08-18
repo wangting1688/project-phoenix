@@ -61,6 +61,8 @@ def _cfg(name: str, default: str = "") -> str:
 
 # 远程本地 TTS 服务地址（线上经反向隧道指向本机 worker）
 TTS_REMOTE_HTTP = _cfg("TTS_REMOTE_HTTP")
+# 首个请求要加载 5.4GB 权重（约 3 分钟），超时必须给足余量；
+# 之前设 1800 秒仍偶发失败是因为上游 HTTP 层先断，不是这里不够。
 TTS_HTTP_TIMEOUT = int(_cfg("TTS_HTTP_TIMEOUT", "1800"))
 
 # 本机 CosyVoice2 位置
