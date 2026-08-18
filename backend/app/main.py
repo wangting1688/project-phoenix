@@ -224,14 +224,24 @@ def cleanup_stuck_tasks():
 
     db = SessionLocal()
     try:
+        # 注意：任务用 daemon 线程执行，进程退出即消失，没有任何恢复机制，
+        # 所以启动时必须把残留的 waiting/running 标记掉，否则前端会一直转圈。
+        # ⚠️ 本钩子在每个 uvicorn worker 启动时都会执行（线上 --workers 2）。
+        # 这不会误杀正常任务（只在启动瞬间跑一次），但意味着部署必然打断在跑
+        # 的任务 —— 故 update.sh 在重启前会先检查是否有任务在执行。
         stuck_workflow = db.query(WorkflowTask).filter(
             WorkflowTask.status.in_(["waiting", "running"])
         ).all()
         if stuck_workflow:
             project_ids = [t.project_id for t in stuck_workflow]
             for task in stuck_workflow:
+                # 记下中断时的阶段：排查「任务为什么没出片」时，
+                # 知道它死在配音还是口型阶段能省掉大量翻日志的时间。
+                stage = f"（中断于 {task.status}，进度 {task.progress or 0}%）"
                 task.status = "failed"
-                task.error_message = "服务重启导致任务中断，请重新创建"
+                task.error_message = f"服务重启导致任务中断{stage}，请重新创建"
+                print(f"[startup] 中断任务 id={task.id} project={task.project_id} "
+                      f"progress={task.progress or 0}%")
             if project_ids:
                 db.query(ContentProject).filter(
                     ContentProject.id.in_(project_ids),

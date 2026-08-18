@@ -74,6 +74,21 @@ fi
 # ---------- 3) 后端变更 -> 重启服务 ----------
 if echo "$CHANGED" | grep -qE "^backend/"; then
   echo "==> [3/4] 后端变更, 重启 $SERVICE ..."
+
+  # 重启会打断正在跑的任务：进程一退，daemon 线程直接消失，
+  # 启动钩子会把 running 任务标记为 failed（口型单条约 8 分钟，很容易撞上）。
+  # 这里先检查，避免把用户正在等的成片弄丢。FORCE_RESTART=1 可跳过。
+  DB="$DEPLOY_DIR/backend/data/phoenix.db"
+  if [ -f "$DB" ] && command -v sqlite3 >/dev/null 2>&1; then
+    BUSY=$(sqlite3 "$DB" "select count(*) from workflow_tasks where status in ('waiting','running');" 2>/dev/null || echo 0)
+    if [ "${BUSY:-0}" -gt 0 ] && [ "${FORCE_RESTART:-0}" != "1" ]; then
+      echo "!! 当前有 $BUSY 个任务正在执行, 重启会导致它们失败。"
+      echo "   等任务结束后重跑本脚本, 或用 FORCE_RESTART=1 强制重启。"
+      echo "   查看: sqlite3 $DB \"select id,project_id,status,progress from workflow_tasks where status in ('waiting','running');\""
+      exit 1
+    fi
+  fi
+
   if systemctl list-unit-files 2>/dev/null | grep -q "^$SERVICE\.service"; then
     systemctl restart "$SERVICE"
     sleep 4
