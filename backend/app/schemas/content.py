@@ -61,6 +61,11 @@ class TaskStatusResponse(BaseModel):
     progress: int
     current_step: Optional[str] = None
     error_message: Optional[str] = None
+    # 排队信息：GPU worker 串行执行（max_workers=1），并发提交会排队。
+    # 不给反馈的话用户只能盯着不动的进度条，误以为卡死。
+    queue_position: Optional[int] = None      # 0=正在执行，>0=前面还有几个
+    queue_total: Optional[int] = None         # 当前未完成任务总数
+    eta_seconds: Optional[int] = None         # 预计还需等待（秒）
 
 
 class TaskResultResponse(BaseModel):
