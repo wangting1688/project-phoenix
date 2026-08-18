@@ -124,10 +124,16 @@ async def tts(text: str = Form(...), ref_text: str = Form(""),
     with tempfile.TemporaryDirectory() as td:
         ref = Path(td) / "ref.wav"
         out = Path(td) / "out.mp3"
-        ref.write_bytes(await ref_wav.read())
+        raw = await ref_wav.read()
+        ref.write_bytes(raw)
+        import hashlib
+        print(f"[tts] 收到 ref_wav {len(raw)} bytes md5={hashlib.md5(raw).hexdigest()[:12]}")
 
         rt = (ref_text or "").strip()
         err = {}
+        # 传输层编码一旦出错，这里能立刻看出来（乱码 vs 正常中文）
+        print(f"[tts] 收到 text[:40]={text[:40]!r}")
+        print(f"[tts] 收到 ref_text[:40]={rt[:40]!r}")
 
         def _run():
             nonlocal rt

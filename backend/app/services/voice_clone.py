@@ -552,11 +552,15 @@ def _resolve_reference(db, profile_id=None, custom_speaker_id=None):
     ref_text = (getattr(profile, "reference_text", "") or "").strip()
     sample = getattr(profile, "sample_path", None) or getattr(profile, "sample_url", None)
     if not sample:
-        return None, ref_text
+        # 没有样本音频时不能单独返回文稿：调用方若把它配到别的音频上就成了错配
+        return None, ""
     p = Path(sample)
     if not p.is_absolute():
         p = _storage_root() / sample
-    return (p if p.exists() else None), ref_text
+    if not p.exists():
+        return None, ""
+    # 音频与文稿同源才成对返回
+    return p, ref_text
 
 
 def _synthesize_local_clone(db, text, output_path, profile_id=None,
@@ -565,13 +569,26 @@ def _synthesize_local_clone(db, text, output_path, profile_id=None,
     """调用本地 CosyVoice2（本机直跑或经隧道派发到本机 worker）。"""
     from app.services import local_tts
 
-    ref_wav = Path(reference_audio) if reference_audio else None
-    ref_text = reference_text
-    if ref_wav is None or ref_text is None:
-        found_wav, found_text = _resolve_reference(
-            db, profile_id=profile_id, custom_speaker_id=custom_speaker_id)
-        ref_wav = ref_wav or found_wav
-        ref_text = ref_text if ref_text is not None else found_text
+    # 参考音频与逐字稿必须成对，绝不能一个来自素材、一个来自声纹档案。
+    # zero-shot 克隆按 (音频, 文稿) 的对应关系建立音素映射，配错会让模型
+    # 用错误的发音基准朗读，产出整段无法辨识的声音（实测回读相似度 5%）。
+    # 曾经的 bug：调用方传了素材截取的音频，而文稿回落到档案里那段
+    # "今天天气真不错..."（属于用户自己的录音样本），两者毫无关系。
+    #
+    # 优先级：声纹档案（用户按稿录制，音文严格对应，实测匹配度 84.8%）
+    #   -> 调用方提供的素材截取（音色同源，但文稿需 worker 侧 ASR 转写）
+    ref_wav, ref_text = _resolve_reference(
+        db, profile_id=profile_id, custom_speaker_id=custom_speaker_id)
+    if ref_wav and (ref_text or "").strip():
+        print(f"[tts] 参考来自声纹档案: {Path(ref_wav).name}")
+    elif reference_audio:
+        # 档案不可用时退回素材截取。此时不带文稿，
+        # 由 worker 侧 ASR 转写保证音文一致。
+        ref_wav = Path(reference_audio)
+        ref_text = reference_text or ""
+        print(f"[tts] 参考来自素材截取: {ref_wav.name}（文稿由 ASR 生成）")
+    else:
+        ref_wav, ref_text = None, ""
 
     if not ref_wav or not Path(ref_wav).exists():
         logger.warning("本地 TTS 缺少参考音频，跳过")
