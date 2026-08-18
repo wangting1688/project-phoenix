@@ -32,7 +32,9 @@ def main():
     ap.add_argument("--max-tempo", type=float, default=1.5)
     a = ap.parse_args()
 
-    payload = sys.stdin.read()
+    # 按字节读并显式 utf-8 解码。若走 sys.stdin.read()，在中文 Windows 上
+    # 默认编码是 GBK，文案会被解成乱码，模型照着乱码发音，产出无法辨识的语音。
+    payload = sys.stdin.buffer.read().decode("utf-8", "replace")
     if "\x00SPLIT\x00" in payload:
         text, ref_text = payload.split("\x00SPLIT\x00", 1)
     else:

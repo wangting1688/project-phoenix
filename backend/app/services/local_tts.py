@@ -319,6 +319,10 @@ def synthesize_local(text: str, ref_wav, ref_text: str, out_path,
     env["COSY_DIR"] = COSY_DIR
     env["COSY_MODEL"] = COSY_MODEL
     env["FFMPEG_BIN"] = FFMPEG
+    # 子进程的 stdin/stdout 必须是 utf-8：默认会取系统 ANSI 编码（简中为 GBK），
+    # 导致传入文案被解成乱码、打印中文日志时抛 UnicodeEncodeError。
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
     for k in ("PYTHONPATH", "PYTHONHOME"):
         env.pop(k, None)
 

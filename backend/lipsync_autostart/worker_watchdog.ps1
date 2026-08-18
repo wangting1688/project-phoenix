@@ -9,10 +9,19 @@ $ErrorActionPreference = 'Continue'
 $Backend = 'D:\汪挺\project-Phoenix\project-phoenix\backend'
 $PyExe   = Join-Path $Backend '.venv_lipsync\Scripts\python.exe'
 $Worker  = Join-Path $Backend 'gpu_worker.py'
+# worker 的 stdout/stderr 必须落盘：口型与配音的诊断信息（回读相似度、
+# ASR 转写、色调映射判定）只打在标准输出，不重定向就无法事后排查。
+$LogDir  = Join-Path $Backend 'lipsync_autostart\logs'
+if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
+$OutLog  = Join-Path $LogDir 'worker_out.log'
+$ErrLog  = Join-Path $LogDir 'worker_err.log'
 
 # 推理引擎（wav2lip / latentsync）。watchdog 用 Start-Process 拉起 worker，
 # 显式在本进程环境里设定，确保重启后不会回退到默认引擎。
 if (-not $env:LIPSYNC_ENGINE) { $env:LIPSYNC_ENGINE = 'luogen' }
+# 日志重定向到文件后，Python 的 stdout 会退回系统 ANSI 编码（简中为 GBK），
+# 打印中文诊断信息时会抛 UnicodeEncodeError 并让整个请求失败。必须固定为 utf-8。
+$env:PYTHONIOENCODING = 'utf-8'
 
 function Write-Log($msg){
     try {
@@ -33,7 +42,12 @@ while ($true) {
     if ($n -eq 0) {
         Write-Log 'worker not running -> starting'
         try {
-            $p = Start-Process -FilePath $PyExe -ArgumentList $Worker -WindowStyle Hidden -PassThru
+            # 重定向会截断旧日志，重启前先留一份 .prev 便于回看崩溃原因
+            foreach ($f in @($OutLog, $ErrLog)) {
+                if (Test-Path $f) { Move-Item -LiteralPath $f -Destination ($f + '.prev') -Force -ErrorAction SilentlyContinue }
+            }
+            $p = Start-Process -FilePath $PyExe -ArgumentList $Worker -WindowStyle Hidden -PassThru `
+                 -RedirectStandardOutput $OutLog -RedirectStandardError $ErrLog
             Write-Log ('started worker pid=' + $p.Id)
         } catch {
             Write-Log ('start failed: ' + $_.Exception.Message)

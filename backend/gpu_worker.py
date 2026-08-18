@@ -13,6 +13,15 @@ from pathlib import Path
 from fastapi import FastAPI, Form, UploadFile, File
 from fastapi.responses import JSONResponse, Response
 
+# 日志里全是中文诊断信息。stdout 被重定向到文件时，Windows 会退回 ANSI 编码
+# (简中 GBK)，print 中文即抛 UnicodeEncodeError 并让整个请求 500。
+# 不依赖启动脚本是否设了 PYTHONIOENCODING，在进程内自行兜底。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 BACKEND = Path(__file__).resolve().parent           # backend/
 # 重要：ffmpeg 必须放在 ASCII 路径下。
 # 官方 inference.py 用 subprocess.call('ffmpeg ...', shell=True) 调 ffmpeg，
@@ -126,14 +135,15 @@ async def tts(text: str = Form(...), ref_text: str = Form(""),
         out = Path(td) / "out.mp3"
         raw = await ref_wav.read()
         ref.write_bytes(raw)
-        import hashlib
-        print(f"[tts] 收到 ref_wav {len(raw)} bytes md5={hashlib.md5(raw).hexdigest()[:12]}")
-
         rt = (ref_text or "").strip()
         err = {}
-        # 传输层编码一旦出错，这里能立刻看出来（乱码 vs 正常中文）
-        print(f"[tts] 收到 text[:40]={text[:40]!r}")
-        print(f"[tts] 收到 ref_text[:40]={rt[:40]!r}")
+        # 请求指纹：ref 音频的 md5 与两段文本的开头。
+        # 排查配音乱码时靠它区分「音文错配」和「传输层编码损坏」两种原因。
+        import hashlib
+        print(
+            f"[tts] req ref_wav={len(raw)}B md5={hashlib.md5(raw).hexdigest()[:12]} "
+            f"text={text[:24]!r} ref_text={rt[:24]!r}"
+        )
 
         def _run():
             nonlocal rt
