@@ -75,6 +75,10 @@ def _is_volc_configured() -> bool:
     return bool(settings.VOLC_TTS_API_KEY) and bool(settings.VOLC_TTS_BASE_URL)
 
 
+# 本地 CosyVoice2 克隆开关（默认开启，火山退为后备）
+LOCAL_TTS_ENABLED = os.environ.get("LOCAL_TTS_ENABLED", "1").strip() == "1"
+
+
 def _is_production() -> bool:
     """生产模式判定: settings.DEBUG 为 False 视为生产环境。
 
@@ -452,44 +456,121 @@ def train_voice(db, profile_id, user_id):
     return profile
 
 
-def synthesize(db, custom_speaker_id, text, output_path, language=0):
+def synthesize(db, custom_speaker_id, text, output_path, language=0,
+               profile_id=None, reference_audio=None, reference_text=None):
     """
-    合成优先级: 用户克隆音色 -> 火山官方音色 -> 本地 macOS say (仅开发/测试模式)
+    合成优先级: 本地 CosyVoice2 克隆 -> 火山克隆音色 -> 火山官方音色 -> macOS say
 
-    模式区分 (依据 settings.DEBUG):
-    - 生产模式 (DEBUG=False): 必须配置火山 TTS, 否则显式报错, 不允许静默降级
-    - 开发/测试模式 (DEBUG=True): 允许本地 fallback (macOS say)
+    本地 CosyVoice2 优先的原因：火山是按量付费且依赖账号授权，
+    2026-08-17 起返回 45000030 resource not granted 导致全链路阻塞；
+    CosyVoice2 全本地、无调用费用、数据不出本机。
+    火山保留为可选后备（配置了就还能用），不删除既有能力。
+
+    reference_audio / reference_text: 显式指定参考音频与其逐字稿。
+    未传时按 profile_id 或 custom_speaker_id 从声纹档案里找。
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # 1. 本地 CosyVoice2 zero-shot 克隆（首选）
+    if LOCAL_TTS_ENABLED:
+        try:
+            result = _synthesize_local_clone(
+                db, text, output_path,
+                profile_id=profile_id,
+                custom_speaker_id=custom_speaker_id,
+                reference_audio=reference_audio,
+                reference_text=reference_text,
+            )
+            if result:
+                return result
+            logger.warning("本地 CosyVoice2 合成未成功，尝试后备方案")
+        except Exception as e:
+            logger.warning("本地 CosyVoice2 合成异常(%s)，尝试后备方案", e)
+
     volc_ok = _is_volc_configured()
 
-    if not volc_ok:
-        if _is_production():
-            raise RuntimeError(
-                "生产环境未配置火山 TTS (VOLC_TTS_API_KEY)，无法生成配音；"
-                "请在生产环境配置 VOLC_TTS_API_KEY 后重试"
-            )
-        logger.warning("火山 TTS 未配置，开发/测试模式允许本地 fallback (macOS say)")
-
-    # 1. 用户克隆声纹 (需 volc.megatts.timbre 授权)
+    # 2. 火山克隆声纹 (需 volc.megatts.timbre 授权)
     if custom_speaker_id and volc_ok:
         mp3_bytes = _call_volc_synthesize(custom_speaker_id, text, language)
         if mp3_bytes:
             output_path.write_bytes(mp3_bytes)
             return output_path
 
-    # 2. 火山官方精品音色 (已开通可用)
+    # 3. 火山官方精品音色
     if volc_ok:
         mp3_bytes = _call_volc_official_tts(text)
         if mp3_bytes:
             output_path.write_bytes(mp3_bytes)
             return output_path
 
-    # 3. 本地兜底 (仅 macOS; 开发/测试模式)
+    # 4. 本地兜底 (仅 macOS; 开发/测试模式)
+    if _is_production():
+        raise RuntimeError(
+            "配音生成失败：本地 CosyVoice2 不可用且火山 TTS 无法调用。"
+            "请检查本机 TTS worker 是否存活（/health 的 tts_available），"
+            "或声纹档案是否有可用的参考音频与逐字稿"
+        )
     logger.warning("使用本地 macOS say 兜底生成 TTS")
     return _fallback_tts(text, output_path)
+
+
+def _resolve_reference(db, profile_id=None, custom_speaker_id=None):
+    """找出可用的参考音频与其逐字稿。
+
+    zero-shot 克隆要求两者严格对应，因此逐字稿缺失时不猜测，
+    而是交给 worker 侧用 ASR 转写。
+    """
+    if not db:
+        return None, None
+    profile = None
+    try:
+        if profile_id:
+            profile = db.query(UserVoiceProfile).filter(
+                UserVoiceProfile.id == profile_id).first()
+        elif custom_speaker_id:
+            profile = db.query(UserVoiceProfile).filter(
+                UserVoiceProfile.custom_speaker_id == custom_speaker_id).first()
+    except Exception as e:
+        logger.warning("查询声纹档案失败: %s", e)
+        return None, None
+    if not profile:
+        return None, None
+
+    ref_text = (getattr(profile, "reference_text", "") or "").strip()
+    sample = getattr(profile, "sample_path", None) or getattr(profile, "sample_url", None)
+    if not sample:
+        return None, ref_text
+    p = Path(sample)
+    if not p.is_absolute():
+        p = _storage_root() / sample
+    return (p if p.exists() else None), ref_text
+
+
+def _synthesize_local_clone(db, text, output_path, profile_id=None,
+                            custom_speaker_id=None,
+                            reference_audio=None, reference_text=None):
+    """调用本地 CosyVoice2（本机直跑或经隧道派发到本机 worker）。"""
+    from app.services import local_tts
+
+    ref_wav = Path(reference_audio) if reference_audio else None
+    ref_text = reference_text
+    if ref_wav is None or ref_text is None:
+        found_wav, found_text = _resolve_reference(
+            db, profile_id=profile_id, custom_speaker_id=custom_speaker_id)
+        ref_wav = ref_wav or found_wav
+        ref_text = ref_text if ref_text is not None else found_text
+
+    if not ref_wav or not Path(ref_wav).exists():
+        logger.warning("本地 TTS 缺少参考音频，跳过")
+        return None
+
+    if local_tts.TTS_REMOTE_HTTP:
+        if not local_tts.available():
+            logger.warning("远程 TTS worker 不可用")
+            return None
+        return local_tts.synthesize_remote(text, ref_wav, ref_text or "", output_path)
+    return local_tts.synthesize_local(text, ref_wav, ref_text or "", output_path)
 
 
 def test_synthesize(db, profile_id, user_id, text):

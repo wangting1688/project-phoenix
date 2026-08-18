@@ -139,19 +139,21 @@ class VideoProducer:
             if not script:
                 raise ValueError("脚本不存在且无法自动生成（项目缺少选题 topic 或 AI 文案生成失败）")
 
-            # Step 2: TTS 生成配音
+            # Step 2: 先取素材 —— 本地音色克隆要用同一条素材里的人声做参考音频，
+            # 所以素材必须在 TTS 之前就位（顺序与火山方案相反）
+            footage_path = self._get_footage_path(params.get("footage_id"))
+            if not footage_path:
+                raise ValueError("素材不存在")
+
+            # Step 3: TTS 生成配音
             self._update_task(task_id, "running", 20, "生成配音")
             tts_path = self._generate_tts(
                 script.content,
                 params.get("voice_profile_id"),
+                footage_path=footage_path,
             )
             if not tts_path:
                 raise RuntimeError("配音生成失败")
-
-            # Step 3: 获取素材
-            footage_path = self._get_footage_path(params.get("footage_id"))
-            if not footage_path:
-                raise ValueError("素材不存在")
 
             # Step 3.5: 口型同步（可选，失败降级用原素材）
             synced_footage = None
@@ -239,7 +241,8 @@ class VideoProducer:
             logger.error("task=%s 文案生成异常: %s", task_id, e)
             return None
 
-    def _generate_tts(self, text: str, voice_profile_id: Optional[int]) -> Optional[Path]:
+    def _generate_tts(self, text: str, voice_profile_id: Optional[int],
+                      footage_path: Optional[Path] = None) -> Optional[Path]:
         """生成 TTS 配音，返回 mp3 路径"""
         from app.services.voice_clone import synthesize
 
@@ -258,12 +261,29 @@ class VideoProducer:
             if vp:
                 custom_speaker_id = vp.custom_speaker_id
 
+        # 本地 CosyVoice2 zero-shot 克隆需要一段参考音频 + 其逐字稿。
+        # 声纹档案里没有可用样本时（存量用户多是这种情况），直接从本次要用的
+        # 素材里截一段人声——音色天然匹配，也不必让用户重新录音。
+        ref_audio, ref_text = None, None
+        if footage_path:
+            try:
+                from app.services import local_tts
+                ref_audio, ref_text = local_tts.pick_reference(
+                    footage_path, self.storage_root / "storage" / "tmp" / "tts_ref")
+                if ref_audio:
+                    logger.info("[video_producer] 参考音频来自素材: %s", ref_audio.name)
+            except Exception as e:
+                logger.warning("[video_producer] 参考音频提取失败: %s", e)
+
         try:
             synthesize(
                 db=self.db,
                 custom_speaker_id=custom_speaker_id,
                 text=text,
                 output_path=out_path,
+                profile_id=voice_profile_id,
+                reference_audio=ref_audio,
+                reference_text=ref_text,
             )
             if out_path.exists() and out_path.stat().st_size > 0:
                 return out_path
