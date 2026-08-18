@@ -133,9 +133,24 @@ async def tts(text: str = Form(...), ref_text: str = Form(""),
             nonlocal rt
             try:
                 if not rt:
-                    print("[tts] 未提供逐字稿，改用 ASR 转写参考音频")
+                    # 逐字稿必须由这里生成：生产机没有 whisper，
+                    # 在上游转写会静默失败并留下空文稿，而空文稿会让
+                    # zero-shot 按错误音素映射发音，产出整段乱码。
+                    print("[tts] 未提供逐字稿，ASR 转写参考音频")
                     rt = _tts.transcribe(ref)
-                return _tts.synthesize_local(text, ref, rt, out)
+                    if not rt.strip():
+                        err["detail"] = "参考音频转写为空，无法克隆"
+                        return None
+                res = _tts.synthesize_local(text, ref, rt, out)
+                if not res:
+                    return None
+                # 质量门禁：回读不可辨识就不返回，避免乱码进到成片
+                ok, ratio, got = _tts.verify_intelligibility(res, text)
+                if not ok:
+                    err["detail"] = (f"合成音频回读不可辨识(相似度 {ratio*100:.1f}%)，"
+                                     f"多为参考音频与逐字稿不匹配")
+                    return None
+                return res
             except Exception as e:
                 err["detail"] = f"{type(e).__name__}: {e}"
                 traceback.print_exc()

@@ -264,14 +264,22 @@ class VideoProducer:
         # 本地 CosyVoice2 zero-shot 克隆需要一段参考音频 + 其逐字稿。
         # 声纹档案里没有可用样本时（存量用户多是这种情况），直接从本次要用的
         # 素材里截一段人声——音色天然匹配，也不必让用户重新录音。
+        #
+        # 注意：只在这里做"截取"，不做转写。逐字稿必须由 worker 侧用 whisper
+        # 生成——生产机没有 whisper 也没有 GPU，在这里转写会静默失败并留下
+        # 空文稿，而空文稿会让 zero-shot 克隆按错误的音素映射发音，
+        # 产出整段无法辨识的声音（已实际发生过一次）。
         ref_audio, ref_text = None, None
         if footage_path:
             try:
                 from app.services import local_tts
-                ref_audio, ref_text = local_tts.pick_reference(
-                    footage_path, self.storage_root / "storage" / "tmp" / "tts_ref")
+                ref_dir = self.storage_root / "storage" / "tmp" / "tts_ref"
+                ref_audio = local_tts.extract_reference(
+                    footage_path, ref_dir / f"ref_{self.project_id}.wav",
+                    start=local_tts.TTS_REF_START, duration=local_tts.TTS_REF_DURATION)
                 if ref_audio:
-                    logger.info("[video_producer] 参考音频来自素材: %s", ref_audio.name)
+                    logger.info("[video_producer] 参考音频取自素材: %s（逐字稿由 worker 侧 ASR 生成）",
+                                ref_audio.name)
             except Exception as e:
                 logger.warning("[video_producer] 参考音频提取失败: %s", e)
 

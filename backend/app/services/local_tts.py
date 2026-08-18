@@ -53,6 +53,10 @@ COSY_PY = os.environ.get(
     "COSY_PY",
     r"C:/Users/ProArt/AppData/Local/Programs/Python/Python311/python.exe")
 
+# 参考音频截取位置。避开素材开头（常有寒暄/停顿），取语音较稳的一段。
+TTS_REF_START = float(os.environ.get("TTS_REF_START", "14"))
+TTS_REF_DURATION = float(os.environ.get("TTS_REF_DURATION", "12"))
+
 # 目标语速（字/秒）。自然口播约 4.5~5.0，低于 3 会明显拖沓。
 TTS_TARGET_CPS = float(os.environ.get("TTS_TARGET_CPS", "4.4"))
 # 单次变速上限，超过说明参考音频可能有问题
@@ -154,6 +158,39 @@ def extract_reference(video_or_audio, out_wav, start: float = 0.0,
     return out_wav
 
 
+def verify_intelligibility(audio_path, expect_text: str,
+                           threshold: float = 0.55) -> Tuple[bool, float, str]:
+    """用 ASR 回读合成音频，判断内容是否可辨识。
+
+    这是可自动化的质量门禁：机器都听不懂，人一定也听不懂。
+    典型故障是参考音频与其逐字稿不匹配（例如上游传了空文稿），
+    此时模型会按错误的音素映射发音，输出整段乱码——而任务状态仍是成功，
+    乱码会一路进到成片。所以在返回前必须验一次。
+
+    阈值 0.55 偏宽松：中文同音字很多，ASR 本身也会写错字
+    （实测正常合成约 77%~88%，乱码约 10% 以下），足以区分两者。
+    """
+    import difflib
+    try:
+        got = transcribe(audio_path)
+    except Exception as e:
+        # 门禁自身故障不应拦住正常合成，放行并留下记录
+        print(f"[tts] 回读校验跳过（ASR 失败: {e}）")
+        return True, 1.0, ""
+    strip = lambda t: re.sub(r"[\s，。、！？；：,.!?;:\"'（）()]", "", t or "")
+    want, real = strip(expect_text), strip(got)
+    if not want or not real:
+        return False, 0.0, got
+    ratio = difflib.SequenceMatcher(None, want, real).ratio()
+    ok = ratio >= threshold
+    print(f"[tts] 回读校验 {'通过' if ok else '未通过'}: 相似度 {ratio*100:.1f}% "
+          f"(阈值 {threshold*100:.0f}%)")
+    if not ok:
+        print(f"[tts]   期望: {want[:60]}")
+        print(f"[tts]   回读: {real[:60]}")
+    return ok, ratio, got
+
+
 def pick_reference(video_or_audio, work_dir, duration: float = 12.0,
                    candidates=(6.0, 14.0, 18.0)) -> Tuple[Optional[Path], str]:
     """从素材里挑一段最合适的参考音频，并给出它的逐字稿。
@@ -239,6 +276,8 @@ def synthesize_local(text: str, ref_wav, ref_text: str, out_path,
         print(f"[tts] 参考音频不存在: {ref_wav}")
         return None
     if not (ref_text or "").strip():
+        # 空文稿绝不放行：zero-shot 会按错误音素映射发音，输出整段乱码。
+        # 上游若拿不到文稿，应把音频交给 worker 侧 ASR，而不是传空串。
         print("[tts] 缺少参考音频逐字稿(ref_text)，拒绝合成")
         return None
     if not Path(COSY_PY).exists():
