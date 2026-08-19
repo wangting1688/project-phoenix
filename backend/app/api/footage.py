@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from typing import List
 
@@ -148,23 +149,35 @@ async def upload_footage(
     os.makedirs(user_dir, exist_ok=True)
     file_path = os.path.join(user_dir, filename)
 
-    content = await file.read()
+    # 流式落盘：整片 read() 会把上百 MB 素材全压进内存，
+    # 线上 2 个 worker 并发上传时容易触发 OOM。
+    file_size = 0
     with open(file_path, "wb") as f:
-        f.write(content)
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            file_size += len(chunk)
+            f.write(chunk)
 
+    # 以下都是阻塞的 ffmpeg 子进程调用，直接在协程里跑会占住事件循环，
+    # 让同一个 worker 上的其他请求（含轮询接口）一起卡住。丢到线程池执行。
     # 提取视频时长 + 生成缩略图
-    duration = _probe_duration(file_path)
     stem = os.path.splitext(filename)[0]
     thumb_filename = f"{stem}_thumb.jpg"
     thumb_path = os.path.join(user_dir, thumb_filename)
-    thumb_url = None
-    if _generate_thumbnail(file_path, thumb_path):
-        thumb_url = f"/static/footage/{current_user.id}/{thumb_filename}"
+
+    duration = await run_in_threadpool(_probe_duration, file_path)
+    thumb_ok = await run_in_threadpool(_generate_thumbnail, file_path, thumb_path)
+    thumb_url = (
+        f"/static/footage/{current_user.id}/{thumb_filename}" if thumb_ok else None
+    )
+    resolution = await run_in_threadpool(_probe_resolution, file_path)
 
     # 拍摄质量检测：口型合成的效果上限由素材光线决定，模型补不回来。
     # 只提示不拦截——素材也可能只用作 B-roll，不一定要走口型。
     try:
-        quality = inspect_footage(file_path)
+        quality = await run_in_threadpool(inspect_footage, file_path)
     except Exception:
         quality = None
 
@@ -175,8 +188,8 @@ async def upload_footage(
         file_path=file_path,
         thumbnail=thumb_url,
         duration=duration,
-        file_size=len(content),
-        resolution=_probe_resolution(file_path) or "1080x1920",
+        file_size=file_size,
+        resolution=resolution or "1080x1920",
         status="ready",
     )
     db.add(footage)

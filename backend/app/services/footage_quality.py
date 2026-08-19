@@ -41,6 +41,10 @@ BRIGHTNESS_MAX = 245.0      # 高于此值判定过曝，嘴部细节被洗掉
 FACE_RATIO_MIN = 0.12
 # 人脸检测派发到 GPU worker（与口型/TTS 共用同一条反向隧道）
 INSPECT_HTTP_TIMEOUT = int(os.environ.get("INSPECT_HTTP_TIMEOUT", "300"))
+# worker 探活超时。反向隧道断开时 POST /inspect 会一直挂到 INSPECT_HTTP_TIMEOUT，
+# 上传请求随之卡两分钟以上，浏览器早已断连（nginx 记 499，用户看到「上传失败」，
+# 而文件其实已落盘）。先用极短超时探 /health，不通就跳过人脸检测。
+INSPECT_PROBE_TIMEOUT = float(os.environ.get("INSPECT_PROBE_TIMEOUT", "3"))
 # 派发给 worker 的探测片段时长。6s 够抽 4 帧，与整片结果差异 <0.01
 PROBE_CLIP_SECONDS = int(os.environ.get("PROBE_CLIP_SECONDS", "6"))
 
@@ -133,6 +137,19 @@ def _make_probe_clip(file_path: str) -> Optional[str]:
     return None
 
 
+def _worker_alive(base: str) -> bool:
+    """短超时探 worker /health。隧道断开时 TCP 连接会挂住，
+    这里用秒级超时快速判死，避免拖垮上传响应。"""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(base + "/health",
+                                    timeout=INSPECT_PROBE_TIMEOUT) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
 def measure_face_ratio(file_path: str) -> Optional[float]:
     """人脸宽度占画面宽度的比例，派发到 GPU worker 的 /inspect 计算。
 
@@ -145,6 +162,11 @@ def measure_face_ratio(file_path: str) -> Optional[float]:
 
     base = _worker_base()
     if not base or not os.path.exists(file_path):
+        return None
+
+    # 隧道断了就别再抽片段、传大文件了，直接判「未检测」
+    if not _worker_alive(base):
+        print("[footage] GPU worker 不可达，跳过人脸检测")
         return None
 
     # 整片经反向隧道回传太慢（实测 43MB 素材耗时 22s），先抽一小段再传。

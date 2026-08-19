@@ -13,11 +13,19 @@
           :show-file-list="false"
           :http-request="handleUpload"
           accept="video/*"
+          :disabled="uploading"
         >
           <el-icon class="upload-icon" :size="40"><IUploadFilled /></el-icon>
           <div class="upload-text">点击或拖拽上传视频素材</div>
           <div class="upload-hint">支持 mp4 / mov / avi 格式</div>
         </el-upload>
+        <div v-if="uploading" class="upload-progress">
+          <div class="upload-progress-name">{{ uploadName }}</div>
+          <el-progress :percentage="uploadPercent" :stroke-width="8" />
+          <div class="upload-progress-hint">
+            {{ uploadPercent < 100 ? '正在上传，请勿关闭页面' : '上传完成，正在生成缩略图并检测画面质量' }}
+          </div>
+        </div>
       </div>
 
       <div class="section">
@@ -150,6 +158,9 @@ import {
 
 const categories = ref<FootageCategory[]>([])
 const footages = ref<Footage[]>([])
+const uploading = ref(false)
+const uploadPercent = ref(0)
+const uploadName = ref('')
 const sourceFilter = ref<string>('all')
 
 const filteredFootages = computed(() => {
@@ -207,13 +218,35 @@ async function loadSuggestShots() {
 }
 
 async function handleUpload(options: any) {
+  if (uploading.value) {
+    ElMessage.warning('已有素材正在上传，请等当前这个传完')
+    return
+  }
+  uploading.value = true
+  uploadPercent.value = 0
+  uploadName.value = options.file?.name || ''
   try {
-    ElMessage.info('正在上传...')
-    const res = await uploadFootage(options.file, selectedCategory.value || undefined)
+    const res = await uploadFootage(
+      options.file,
+      selectedCategory.value || undefined,
+      (p) => { uploadPercent.value = p },
+    )
     loadData()
     showQualityFeedback(res?.quality)
-  } catch (e) {
-    ElMessage.error('上传失败')
+  } catch (e: any) {
+    // 上传本身可能是成功的（服务端已落盘），失败往往出在后处理或连接中断，
+    // 所以刷新列表让用户自己确认，别让他重复上传同一个大文件。
+    loadData()
+    const msg = e?.message || ''
+    ElMessage.error(
+      /timeout|Network/i.test(msg)
+        ? '网络中断或超时，请刷新列表确认素材是否已存在'
+        : '上传失败，请重试',
+    )
+  } finally {
+    uploading.value = false
+    uploadPercent.value = 0
+    uploadName.value = ''
   }
 }
 
@@ -343,6 +376,12 @@ function getTypeName(type: string) {
 .upload-icon { color: #667eea; margin-bottom: 10px; }
 .upload-text { font-size: 16px; color: #303133; margin-bottom: 4px; }
 .upload-hint { font-size: 12px; color: #909399; }
+.upload-progress { margin-top: 12px; }
+.upload-progress-name {
+  font-size: 13px; color: #303133; margin-bottom: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.upload-progress-hint { font-size: 12px; color: #909399; margin-top: 6px; }
 
 .section { margin-bottom: 20px; }
 .section-header {

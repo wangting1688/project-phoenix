@@ -53,12 +53,22 @@ export function createCategory(name: string, type: string) {
   return request.post<unknown, FootageCategory>('/footage/categories', { name, type })
 }
 
-export function uploadFootage(file: File, categoryId?: number) {
+export function uploadFootage(
+  file: File,
+  categoryId?: number,
+  onProgress?: (percent: number) => void,
+) {
   const formData = new FormData()
   formData.append('file', file)
   if (categoryId) formData.append('category_id', String(categoryId))
   return request.post<unknown, UploadFootageResult>('/footage/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    // 大素材上传要几十秒，默认 3 分钟超时不够；单独放宽到 30 分钟
+    timeout: 30 * 60 * 1000,
+    onUploadProgress: (e) => {
+      if (!onProgress || !e.total) return
+      onProgress(Math.round((e.loaded * 100) / e.total))
+    },
   })
 }
 
