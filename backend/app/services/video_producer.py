@@ -20,7 +20,9 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 import threading
 import time
 import json
@@ -169,10 +171,15 @@ class VideoProducer:
             if not footage_path:
                 raise ValueError("素材不存在")
 
+            # 文案长度必须匹配素材时长：素材 31s 却生成 380 字（约 86s）时，
+            # 口型阶段要循环素材凑时长，帧数翻倍会把内存撑爆（任务 37 即如此）。
+            # 按句子边界裁剪，语义完整，不会断在半句话中间。
+            script_text = self._fit_script_to_footage(script.content, footage_path)
+
             # Step 3: TTS 生成配音
             self._update_task(task_id, "running", 20, "生成配音")
             tts_path = self._generate_tts(
-                script.content,
+                script_text,
                 params.get("voice_profile_id"),
                 footage_path=footage_path,
             )
@@ -191,6 +198,12 @@ class VideoProducer:
             lipsync_error = None
             if lipsync_requested:
                 self._update_task(task_id, "running", 45, "对齐口型")
+                # 配音比素材长时，口型流水线会循环素材去对齐音频，帧数成倍增长。
+                # 全分辨率帧要一次性驻留内存：实测 1809 帧 x 2336x1088x3
+                # 需连续 12.8GiB，直接 ArrayMemoryError（任务 37 即如此，
+                # 配音 72s / 素材 31s，被循环到 2.3 倍）。
+                # 兜底：限制循环倍数，必要时截断配音，让口型至少能跑完。
+                tts_path = self._cap_audio_for_lipsync(footage_path, tts_path)
                 try:
                     synced_footage = self._run_lipsync(footage_path, tts_path)
                     if synced_footage is None:
@@ -213,7 +226,7 @@ class VideoProducer:
             # Step 4: 视频渲染（ffmpeg 拼接+字幕+配音）
             self._update_task(task_id, "running", 75, "合成视频")
             result = self._render_video(
-                script=script.content,
+                script=script_text,
                 footage_path=final_footage,
                 tts_path=tts_path,
                 custom_speaker_id=None,  # TTS 已经生成了，这里不传
@@ -385,6 +398,118 @@ class VideoProducer:
         if fp.exists():
             return fp
         return None
+
+    def _fit_script_to_footage(self, text: str, footage_path: Optional[Path]) -> str:
+        """按素材时长裁剪文案，保留完整句子。
+
+        口型流水线必须让画面覆盖整段配音，配音过长就得循环素材，
+        而全分辨率帧要一次性驻留内存（1809 帧需连续 12.8GiB）。
+        与其等 20 分钟推理后失败，不如先把文案收到素材能承载的长度。
+
+        允许略超素材时长（LIPSYNC_MAX_LOOPS，默认 1.5 倍），
+        因为循环 1~1.5 次的内存开销仍在安全范围。
+        """
+        from app.services.video_renderer import _probe_video_meta
+
+        cleaned = _strip_structure_markers(text)
+        if not footage_path:
+            return cleaned
+        try:
+            meta = _probe_video_meta(footage_path)
+            src_dur = float(meta[2]) if meta and meta[2] else 0.0
+            if src_dur <= 0:
+                return cleaned
+            max_loops = float(os.environ.get("LIPSYNC_MAX_LOOPS", "1.5"))
+            cps = float(os.environ.get("TTS_TARGET_CPS", "4.4"))
+            budget = int(src_dur * max_loops * cps)
+            if len(cleaned) <= budget:
+                return cleaned
+
+            # 按句末标点切分，累加到预算为止，保证不断句
+            parts = re.split(r"(?<=[。！？!?；;])", cleaned)
+            kept, used = [], 0
+            for seg in parts:
+                seg = seg.strip()
+                if not seg:
+                    continue
+                if used + len(seg) > budget and kept:
+                    break
+                kept.append(seg)
+                used += len(seg)
+            result = "".join(kept) if kept else cleaned[:budget]
+            logger.warning(
+                "文案 %d 字超出素材 %.1fs 可承载的 %d 字，已裁剪到 %d 字",
+                len(cleaned), src_dur, budget, len(result))
+            return result
+        except Exception as e:
+            logger.warning("文案时长适配异常（按原文继续）: %s", e)
+            return cleaned
+
+    def _cap_audio_for_lipsync(self, footage_path: Path, audio_path: Path) -> Path:
+        """限制送入口型的音频时长，避免素材被循环太多倍而耗尽内存。
+
+        上限 = 素材时长 x LIPSYNC_MAX_LOOPS（默认 1.5）。超出则截断音频。
+        截断优于失败：用户至少能拿到一条口型正确的成片，
+        而不是等 20 分钟推理后收到一个内存错误。
+        """
+        from app.services.video_renderer import _probe_video_meta
+
+        try:
+            max_loops = float(os.environ.get("LIPSYNC_MAX_LOOPS", "1.5"))
+            meta = _probe_video_meta(footage_path)
+            src_dur = float(meta[2]) if meta and meta[2] else 0.0
+            if src_dur <= 0:
+                return audio_path
+            limit = src_dur * max_loops
+            aud_dur = self._probe_audio_duration(audio_path)
+            if aud_dur <= 0 or aud_dur <= limit:
+                return audio_path
+
+            capped = audio_path.with_name(audio_path.stem + "_capped.mp3")
+            ffmpeg = self._find_ffmpeg()
+            if not ffmpeg:
+                logger.warning("找不到 ffmpeg，无法截断配音，可能因内存不足失败")
+                return audio_path
+            r = subprocess.run(
+                [ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+                 "-t", f"{limit:.2f}", "-i", str(audio_path),
+                 "-c", "copy", str(capped)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=120)
+            if capped.exists() and capped.stat().st_size > 0:
+                logger.warning(
+                    "配音 %.1fs 超过素材 %.1fs 的 %.1f 倍上限，已截断到 %.1fs 以保证口型可用",
+                    aud_dur, src_dur, max_loops, limit)
+                return capped
+            logger.warning("截断配音失败 rc=%s，按原音频继续", r.returncode)
+        except Exception as e:
+            logger.warning("配音时长保护异常（按原音频继续）: %s", e)
+        return audio_path
+
+    @staticmethod
+    def _find_ffmpeg() -> Optional[str]:
+        import shutil
+        for p in (os.environ.get("FFMPEG_BIN"), shutil.which("ffmpeg"),
+                  "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"):
+            if p and os.path.isfile(p):
+                return p
+        return None
+
+    def _probe_audio_duration(self, audio_path: Path) -> float:
+        """音频时长（秒）。生产机没有 ffprobe，用 ffmpeg -i 解析。"""
+        ffmpeg = self._find_ffmpeg()
+        if not ffmpeg:
+            return 0.0
+        try:
+            out = subprocess.run([ffmpeg, "-i", str(audio_path)],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 universal_newlines=True, timeout=60)
+            m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", out.stderr or "")
+            if m:
+                h, mi, sec = int(m.group(1)), int(m.group(2)), float(m.group(3))
+                return h * 3600 + mi * 60 + sec
+        except Exception:
+            pass
+        return 0.0
 
     def _run_lipsync(self, video_path: Path, audio_path: Path) -> Optional[Path]:
         """调用口型同步服务，返回同步后的视频路径"""
