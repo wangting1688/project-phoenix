@@ -24,10 +24,30 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Optional
 
 FFMPEG = os.environ.get("FFMPEG_BIN", "ffmpeg")
+
+
+def kill_process_tree(pid: int) -> None:
+    """连根杀掉一棵进程树。
+
+    口型流水线是「worker -> run_pipeline -> scripts.inference」三层，
+    占显存的是最里层。只杀顶层会留下孤儿推理独占显卡（2026-08-22 事故）。
+    psutil 不是本项目依赖，所以走系统命令：Windows 用 taskkill /T，
+    其他平台杀进程组。
+    """
+    try:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                           capture_output=True, timeout=60)
+        else:
+            os.killpg(os.getpgid(pid), 9)
+    except Exception as e:
+        print(f"[lipsync] 终止进程树 {pid} 失败: {e}")
+
 
 # 选择推理内核。默认 luogen：直接复用「罗根视频生成」已验证的四阶段流水线，
 # 经用户目视确认效果达标（嘴部相对亮度 0.804 最接近真人 0.842，耗时约 8 分钟）。
@@ -422,7 +442,11 @@ LUOGEN_PIPELINE = os.environ.get(
     "LUOGEN_PIPELINE", r"D:/luogen_demo/pipeline")
 LUOGEN_PY = os.environ.get(
     "LUOGEN_PY", r"D:/luogen_demo/latentsync_env/Scripts/python.exe")
-
+# 单次推理上限。默认 3300 秒，必须小于线上 LIPSYNC_HTTP_TIMEOUT（3600）：
+# 2026-08-22 事故里它是 7200，线上等满 1 小时放弃后本机仍在推理，
+# 孤儿进程独占 18GB 显存，后续任务全部撞上"显存不足"。
+# 宁可这边先失败并释放显卡，也不要留下没人来取结果的推理。
+LUOGEN_TIMEOUT = int(os.environ.get("LUOGEN_TIMEOUT", "3300"))
 
 class LuogenEngine(LipsyncEngine):
     """把罗根项目的 run_pipeline.py 当成外部推理服务调用。
@@ -488,19 +512,45 @@ class LuogenEngine(LipsyncEngine):
         for k in ("PYTHONPATH", "PYTHONHOME"):
             env.pop(k, None)
 
-        print(f"[lipsync:luogen] 调用外部流水线 name={name}")
-        proc = subprocess.run(
+        started = time.time()
+        print(f"[lipsync:luogen] 调用外部流水线 name={name} timeout={LUOGEN_TIMEOUT}s")
+        # 必须用 Popen 而非 subprocess.run：run 超时只杀直接子进程，
+        # 而这条流水线会再 spawn 一个 scripts.inference 子进程，真正吃显存的是后者。
+        # 事故现场就是父进程退出后孙进程继续占着 18GB 显卡跑了一小时。
+        proc = subprocess.Popen(
             cmd, cwd=str(pipeline_dir), env=env,
-            capture_output=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             encoding="utf-8", errors="replace",
-            timeout=int(os.environ.get("LUOGEN_TIMEOUT", "7200")),
         )
+        try:
+            stdout, stderr = proc.communicate(timeout=LUOGEN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            print(f"[lipsync:luogen] 超时 {LUOGEN_TIMEOUT}s，终止流水线进程树")
+            kill_process_tree(proc.pid)
+            stdout, stderr = proc.communicate()
+            stderr = (stderr or "") + f"\n[timeout] 超过 {LUOGEN_TIMEOUT}s 未完成"
+        except BaseException:
+            # 上层取消或进程被中断时同样不能留下占卡的推理
+            kill_process_tree(proc.pid)
+            raise
         produced = pipeline_dir / "output" / f"{name}.mp4"
         if not (produced.exists() and produced.stat().st_size > 0):
-            tail = (proc.stderr or proc.stdout or "")[-1500:]
+            tail = (stderr or stdout or "")[-1500:]
             print(f"[lipsync:luogen] 流水线未产出成片 rc={proc.returncode}\n{tail}")
+            # 失败路径也要清理：work/ 下是无损帧与素材副本，单次可达数 GB，
+            # 只在成功分支清会让磁盘随失败次数持续膨胀。
+            shutil.rmtree(staging, ignore_errors=True)
+            shutil.rmtree(pipeline_dir / "work" / name, ignore_errors=True)
             return False
 
+        cost = time.time() - started
+        # 记录耗时：这条流水线的成本随音频时长线性增长，日志里有实测值才能
+        # 判断某次任务是正常慢还是异常慢（显存被抢占时会成倍变慢）。
+        print(f"[lipsync:luogen] 完成 name={name} 耗时 {cost / 60:.1f} 分钟")
+        if cost > LUOGEN_TIMEOUT * 0.8:
+            print(f"[lipsync:luogen] 警告: 耗时已达超时上限的 "
+                  f"{cost / LUOGEN_TIMEOUT * 100:.0f}%，"
+                  "建议缩短素材时长或检查是否有其他程序占用显卡")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(produced.read_bytes())
 

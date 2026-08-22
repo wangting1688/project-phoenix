@@ -309,7 +309,11 @@ async def sync(face: UploadFile = File(...), audio: UploadFile = File(...)):
                             status_code=503)
     # 推理前主动回收辅助模型占用的显存，避免被"小"占用挤到临界点
     free_mib = _free_gpu_for_lipsync()
-    min_free = int(os.environ.get("LIPSYNC_MIN_FREE_MIB", "8000"))
+    # LatentSync 512 推理实测占用约 18~20GB。门槛过去写 8000MiB，比真实需求低一半：
+    # 显存被别的程序（如 ComfyUI）占掉一半时，任务不会被拦下，而是挤在剩余显存里
+    # 慢跑——2026-08-22 那次 74 秒素材跑满 1 小时仍未完成，线上等待超时放弃。
+    # 门槛贴近真实需求后，这种情况会立刻返回可读的"稍后重试"，而不是白烧一小时显卡。
+    min_free = int(os.environ.get("LIPSYNC_MIN_FREE_MIB", "17000"))
     if free_mib is not None and free_mib < min_free:
         # 提前拦下比让 cuDNN 抛 HOST_ALLOCATION_FAILED 好：
         # 那个报错信息对上层毫无指导意义，排查要翻很久日志。
@@ -410,6 +414,45 @@ async def tts(text: str = Form(...), ref_text: str = Form(""),
                         status_code=500)
 
 
+def _sweep_orphan_lipsync():
+    """清扫上次遗留的口型推理进程。
+
+    worker 崩溃或被强杀时，它 spawn 的 run_pipeline / scripts.inference
+    不会跟着退出，却各自占着近 20GB 显存。2026-08-22 就因此让后续任务
+    连续报"显存不足"。启动时先收干净，保证 worker 起来即有完整显卡可用。
+    只匹配本流水线特征命令行，不碰用户自己的 ComfyUI 等其他 GPU 程序。
+    """
+    if sys.platform != "win32":
+        return
+    # 用 PowerShell 的 CIM 查询而不是 wmic：wmic 在新版 Windows 上已被移除
+    # （实测报 WinError 2），清扫会静默失效。
+    ps = (
+        "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
+        r"Where-Object { $_.CommandLine -match 'run_pipeline\.py|scripts\.inference' } | "
+        "ForEach-Object { $_.ProcessId }"
+    )
+    try:
+        import subprocess
+        r = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", ps],
+            capture_output=True, text=True, timeout=60,
+            encoding="utf-8", errors="replace")
+        killed = []
+        for line in (r.stdout or "").splitlines():
+            pid = line.strip()
+            if not pid.isdigit() or int(pid) == os.getpid():
+                continue
+            subprocess.run(["taskkill", "/F", "/T", "/PID", pid],
+                           capture_output=True, timeout=60)
+            killed.append(pid)
+        if killed:
+            print(f">>> 清扫遗留口型推理进程: {', '.join(killed)}")
+        else:
+            print(">>> 无遗留口型推理进程")
+    except Exception as e:
+        print(f">>> 清扫遗留进程失败: {e}")
+
+
 @app.on_event("startup")
 async def _warmup():
     """后台预热 CosyVoice2。
@@ -418,6 +461,8 @@ async def _warmup():
     启动即在后台加载，让第一个真实任务直接命中已就绪的模型。
     口型模型不在这里预热：它占近 20GB 显存，且 luogen 引擎是子进程模式。
     """
+    _sweep_orphan_lipsync()
+
     if _tts is None:
         return
 
