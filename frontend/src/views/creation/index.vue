@@ -101,11 +101,40 @@
             <div class="script-header">
               <span class="script-tag">{{ scriptTypeName(s.type) }}</span>
               <span v-if="s.score" class="script-score">评分 {{ s.score }}</span>
+              <el-tooltip v-if="editingScriptId !== s.id" content="编辑文案" placement="top">
+                <button class="script-edit-btn" @click.stop="startEditScript(s)">
+                  <el-icon><IEdit /></el-icon>
+                </button>
+              </el-tooltip>
             </div>
-            <div class="script-content">{{ s.content }}</div>
-            <div class="script-check" v-if="selectedScriptId === s.id">
-              <el-icon><ICheck /></el-icon> 已选择
-            </div>
+
+            <template v-if="editingScriptId === s.id">
+              <textarea
+                ref="scriptEditor"
+                v-model="editingContent"
+                class="script-editor"
+                rows="10"
+                @click.stop
+                @keydown.stop
+              ></textarea>
+              <div class="script-edit-actions" @click.stop>
+                <span class="script-edit-count">{{ editingContent.length }} 字</span>
+                <button class="script-edit-cancel" @click="cancelEditScript">取消</button>
+                <button
+                  class="script-edit-save"
+                  :disabled="savingScript || !editingContent.trim()"
+                  @click="saveEditScript(s)"
+                >
+                  {{ savingScript ? '保存中...' : '保存' }}
+                </button>
+              </div>
+            </template>
+            <template v-else>
+              <div class="script-content">{{ s.content }}</div>
+              <div class="script-check" v-if="selectedScriptId === s.id">
+                <el-icon><ICheck /></el-icon> 已选择
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -305,13 +334,14 @@ import { ElMessage } from 'element-plus'
 import {
   ILoading,
   ICheck,
+  IEdit,
   IVideoCamera,
   IVideoPlay,
   ICircleCheck,
   IClock,
   ICircleClose,
 } from '@/utils/icons'
-import { createProject, getProjectScripts, getTaskStatus } from '@/api/creation'
+import { createProject, getProjectScripts, getTaskStatus, updateScript } from '@/api/creation'
 import { generateVideo } from '@/api/video'
 import { getVoiceProfiles, testVoiceProfile, type VoiceProfile } from '@/api/voiceProfile'
 import { listFootages, type Footage } from '@/api/footage'
@@ -348,6 +378,45 @@ const formData = ref({
 // ===== Step 2: 脚本 =====
 const scripts = ref<any[]>([])
 const selectedScriptId = ref<number | null>(null)
+
+// 文案就地编辑。AI 写出来的文案常带镜头备注或个别措辞要改，
+// 之前只能整条重新生成，改一个词也要等一轮 AI。
+const editingScriptId = ref<number | null>(null)
+const editingContent = ref('')
+const savingScript = ref(false)
+
+function startEditScript(s: any) {
+  // 编辑的同时选中它，避免出现"编辑了 A 却生成 B"的错位
+  selectedScriptId.value = s.id
+  editingScriptId.value = s.id
+  editingContent.value = s.content || ''
+}
+
+function cancelEditScript() {
+  editingScriptId.value = null
+  editingContent.value = ''
+}
+
+async function saveEditScript(s: any) {
+  const text = editingContent.value.trim()
+  if (!text) {
+    ElMessage.warning('文案不能为空')
+    return
+  }
+  savingScript.value = true
+  try {
+    const updated = await updateScript(s.id, text)
+    // 就地更新本地列表，避免整页刷新丢掉当前步骤
+    s.content = updated?.content ?? text
+    editingScriptId.value = null
+    editingContent.value = ''
+    ElMessage.success('文案已保存')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '保存失败，请稍后重试')
+  } finally {
+    savingScript.value = false
+  }
+}
 const generatingScripts = ref(false)
 const scriptWaitSeconds = ref(0)      // 文案生成已等待秒数
 const scriptTimeout = ref(false)      // 60s 仍无文案时为 true
@@ -1123,6 +1192,77 @@ watch(
   display: flex;
   align-items: center;
   gap: 4px;
+}
+
+/* 文案就地编辑 */
+.script-edit-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  background: #fff;
+  color: #909399;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.script-edit-btn:hover {
+  color: #667eea;
+  border-color: #667eea;
+}
+
+.script-editor {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.7;
+  color: #303133;
+  padding: 10px 12px;
+  border: 1px solid #667eea;
+  border-radius: 6px;
+  resize: vertical;
+  outline: none;
+}
+
+.script-edit-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.script-edit-count {
+  margin-right: auto;
+  font-size: 12px;
+  color: #909399;
+}
+
+.script-edit-cancel,
+.script-edit-save {
+  padding: 6px 16px;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid #dcdfe6;
+  background: #fff;
+  color: #606266;
+}
+
+.script-edit-save {
+  border-color: #667eea;
+  background: #667eea;
+  color: #fff;
+}
+
+.script-edit-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* 声音列表 */
