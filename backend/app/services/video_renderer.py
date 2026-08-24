@@ -17,14 +17,28 @@ import platform
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# 中文字体 (macOS 自带, 部署到 Linux 时换 Noto Sans CJK 路径)
+# 中文字体候选，按"字形观感优先"排序：先黑体类（短视频字幕通用），再兜底。
+# 注意生产机是 CentOS 系，路径与 Debian 不同（/usr/share/fonts/wqy-microhei/…
+# 而不是 /usr/share/fonts/truetype/wqy/…）。原列表里 Debian 与 macOS 路径占多数，
+# 线上其实只有最后一项碰巧命中，属于运气而非设计，故显式补全常见发行版路径。
 _FONT_CANDIDATES = [
+    # macOS 开发机
     "/System/Library/Fonts/PingFang.ttc",
     "/System/Library/Fonts/STHeiti Medium.ttc",
     "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    # CentOS / RHEL 系（生产机）
+    "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+    "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc",
+    "/usr/share/fonts/adobe-source-han-sans-cn/SourceHanSansCN-Regular.otf",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+    # Debian / Ubuntu 系
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-    "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    # Windows 开发机
+    "C:/Windows/Fonts/msyh.ttc",
+    "C:/Windows/Fonts/msyhbd.ttc",
+    "C:/Windows/Fonts/simhei.ttf",
 ]
 
 
@@ -164,6 +178,158 @@ def _sanitize_text(text: str) -> str:
     )
 
 
+# 单行最多几个字。短视频竖屏画面窄，一行超过约 16 字就会挤到边缘，
+# 观众来不及看完；行业通行做法是 12~16 字一行、最多两行。
+SUB_MAX_CHARS_PER_LINE = int(os.environ.get("SUB_MAX_CHARS_PER_LINE", "14"))
+# 一条字幕最多几行。超过就该拆成下一条，而不是堆三四行盖住画面。
+SUB_MAX_LINES = int(os.environ.get("SUB_MAX_LINES", "2"))
+# 次级断句标点：句号问号切完仍过长时，在这些位置继续拆。
+_SUB_BREAK_CHARS = "，、；：,;:"
+
+
+def _split_long_text(text: str, limit: int) -> List[str]:
+    """把过长的字幕文本拆成若干短句。
+
+    优先在标点处断，读起来才自然；找不到合适标点再按字数硬切。
+    原来的分句只按句号问号切，一句 47 字（约 3000px 宽）直接冲出 1088px 画面，
+    这是"字幕太长"的根因。
+    """
+    text = text.strip()
+    if len(text) <= limit:
+        return [text] if text else []
+
+    out: List[str] = []
+    rest = text
+    while len(rest) > limit:
+        # 在 [limit*0.5, limit] 区间里找最靠后的标点，避免切出一两个字的碎片
+        cut = -1
+        for i in range(limit - 1, max(int(limit * 0.5), 1) - 1, -1):
+            if rest[i] in _SUB_BREAK_CHARS:
+                cut = i + 1  # 标点跟在上一句尾部
+                break
+        if cut <= 0:
+            cut = limit
+        piece = rest[:cut].strip().strip("".join(_SUB_BREAK_CHARS))
+        if piece:
+            out.append(piece)
+        rest = rest[cut:].strip()
+    rest = rest.strip("".join(_SUB_BREAK_CHARS))
+    if rest:
+        out.append(rest)
+    return out
+
+
+def _wrap_lines(text: str, limit: int) -> str:
+    """按字数折行，返回用 ASS 换行符 \\N 连接的文本。"""
+    lines = [text[i:i + limit] for i in range(0, len(text), limit)]
+    return "\\N".join(lines)
+
+
+def _normalize_subtitles(subtitles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """把上游字幕规整成"每条不超过两行、每行不超过 14 字"的短句。
+
+    时长按字数比例分摊到拆出来的各段，保持与配音节奏大致同步。
+    """
+    per_entry = SUB_MAX_CHARS_PER_LINE * SUB_MAX_LINES
+    out: List[Dict[str, Any]] = []
+    for sub in subtitles:
+        raw = (sub.get("text") or "").strip()
+        if not raw:
+            continue
+        start = float(sub.get("start_sec") or 0)
+        end = float(sub.get("end_sec") or start + 2)
+        if end <= start:
+            end = start + 2
+        pieces = _split_long_text(raw, per_entry)
+        if not pieces:
+            continue
+        total_chars = sum(len(p) for p in pieces) or 1
+        cursor = start
+        span = end - start
+        for p in pieces:
+            share = span * len(p) / total_chars
+            # 太短会一闪而过看不清；0.8 秒是可读下限
+            seg_end = min(end, cursor + max(share, 0.8))
+            out.append({
+                "text": p,
+                "start_sec": cursor,
+                "end_sec": seg_end,
+            })
+            cursor = seg_end
+    return out
+
+
+def _escape_filter_path(p) -> str:
+    """把路径转成能安全嵌进 ffmpeg filter 选项的形式。
+
+    filter 用冒号分隔选项，所以 Windows 盘符的冒号必须转义（D: -> D\\:），
+    反斜杠一律换成正斜杠。实测漏掉任一处都会报
+    "Error parsing filterchain"，而且 fontsdir 与字幕路径都需要处理。
+    """
+    return str(p).replace("\\", "/").replace(":", "\\:")
+
+
+def _ass_escape(text: str) -> str:
+    """ASS 事件行里的危险字符。
+
+    与 drawtext 不同，ASS 不受 ffmpeg filter 语法限制（无需替换逗号冒号），
+    只要避开花括号（覆盖标签）与真实换行即可，所以标点能原样保留。
+    """
+    return (text.replace("\\", "")
+                .replace("{", "(")
+                .replace("}", ")")
+                .replace("\n", " ")
+                .replace("\r", " "))
+
+
+def _ass_time(sec: float) -> str:
+    sec = max(0.0, sec)
+    h = int(sec // 3600)
+    m = int((sec % 3600) // 60)
+    s = sec % 60
+    return f"{h:d}:{m:02d}:{s:05.2f}"
+
+
+def _build_ass(subtitles: List[Dict[str, Any]], width: int, height: int,
+               font_path: str) -> str:
+    """生成 ASS 字幕内容。
+
+    改用 libass 而不是继续堆 drawtext：drawtext 没有换行能力，一条长句只能
+    整行铺开并冲出画面；libass 是 Aegisub/VLC 同一套渲染引擎，原生支持
+    折行、描边、阴影与安全边距，且生产机的 ffmpeg 已带 ass/subtitles 滤镜。
+    """
+    # 字号按画面高度取，竖屏 1920 高时约 60px，换分辨率不用改代码
+    font_size = max(28, int(height * 0.032))
+    margin_v = max(40, int(height * 0.12))     # 底部安全区，避开平台控件
+    margin_h = max(30, int(width * 0.06))      # 左右安全边距
+    outline = max(2, int(font_size * 0.06))
+    shadow = max(1, int(font_size * 0.03))
+    font_name = Path(font_path).stem
+
+    header = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: {width}
+PlayResY: {height}
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,{font_name},{font_size},&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline},{shadow},2,{margin_h},{margin_h},{margin_v},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    lines = [header]
+    for sub in subtitles:
+        text = _wrap_lines(_ass_escape(sub["text"]), SUB_MAX_CHARS_PER_LINE)
+        lines.append(
+            f"Dialogue: 0,{_ass_time(sub['start_sec'])},"
+            f"{_ass_time(sub['end_sec'])},Default,,0,0,0,,{text}"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _drawtext_filter(text: str, start_sec: float, end_sec: float, font: str) -> str:
     """构造一条 drawtext filter 表达式, enable 控制时间窗口"""
     safe = _sanitize_text(text)
@@ -292,21 +458,24 @@ def render_video(
     scale_chain = scale_chain.rstrip(";")
     concat_filter = scale_chain + ";" + f"{concat_inputs}concat=n={n}:v=1:a=0[cv]"
 
-    # 2) 构造字幕 drawtext 链 (链式 , 串联, 最后一个输出到 [outv])
-    drawtext_chain: List[str] = []
-    for sub in subtitles:
-        s = float(sub.get("start_sec") or 0)
-        e = float(sub.get("end_sec") or s + 2)
-        if e <= s:
-            e = s + 2
-        text = sub.get("text") or ""
-        if not text.strip():
-            continue
-        drawtext_chain.append(_drawtext_filter(text, s, e, font))
-
-    if drawtext_chain:
-        # concat 输出 [cv] 是 labeled, 用 ; 重新拉链: [cv]drawtext1,drawtext2,...[outv]
-        vf_arg = concat_filter + ";" + "[cv]" + ",".join(drawtext_chain) + "[outv]"
+    # 2) 字幕：先规整成短句，再交给 libass 渲染。
+    # 不再用 drawtext —— 它没有折行能力，一条 47 字的长句会排到约 3000px 宽而
+    # 冲出 1088px 的竖屏画面（这是"字幕太长"的根因）。libass 支持折行、描边、
+    # 安全边距，且生产机 ffmpeg 已带 ass 滤镜。
+    norm_subs = _normalize_subtitles(subtitles)
+    ass_path: Optional[Path] = None
+    if norm_subs:
+        ass_path = output_dir / f"sub_{project_id}_{int(time.time())}.ass"
+        ass_path.write_text(_build_ass(norm_subs, w, h, font), encoding="utf-8")
+        print(f"[render] 字幕 {len(subtitles)} 条 -> 规整为 {len(norm_subs)} 条短句"
+              f"（每行 <= {SUB_MAX_CHARS_PER_LINE} 字，最多 {SUB_MAX_LINES} 行）")
+        # ass 滤镜的路径参数要转义盘符冒号（filter 用冒号分隔选项）。
+        # fontsdir 同样要转义，漏掉它在 Windows 上会报 Error parsing filterchain。
+        ass_arg = _escape_filter_path(ass_path)
+        fonts_arg = _escape_filter_path(Path(font).parent)
+        vf_arg = (concat_filter + ";" + "[cv]"
+                  + f"ass='{ass_arg}':fontsdir='{fonts_arg}'"
+                  + "[outv]")
     else:
         vf_arg = concat_filter.replace("[cv]", "[outv]")
 
@@ -422,5 +591,5 @@ def render_video(
         "has_audio": has_audio,
         "file_size": out_path.stat().st_size,
         "scene_count": n,
-        "subtitle_count": len(drawtext_chain),
+        "subtitle_count": len(norm_subs),
     }
