@@ -32,6 +32,7 @@ zero-shot 克隆只需一段参考音频 + 该段的逐字文稿，无需训练�
 import os
 import re
 import subprocess
+import time
 import uuid
 from pathlib import Path
 from typing import Optional, Tuple
@@ -277,6 +278,13 @@ def pick_reference(video_or_audio, work_dir, duration: float = 12.0,
 WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 
 
+# 已加载的 whisper 模型，按 (model_size, device) 缓存。
+# 一次配音请求会转写两轮（参考音频取逐字稿 + 成品回读校验），
+# 每轮都 load_model 等于把加载成本付两遍。跑在 CPU 上时模型不占显存，
+# 常驻复用是纯赚；跑在 GPU 上则仍旧用完即放，避免挤占口型推理的显存。
+_whisper_cache = {}
+
+
 def transcribe(audio_path, model_size: str = "base") -> str:
     """用 whisper 转写参考音频，得到逐字稿。
 
@@ -286,14 +294,22 @@ def transcribe(audio_path, model_size: str = "base") -> str:
     if ff_dir and ff_dir not in os.environ.get("PATH", ""):
         os.environ["PATH"] = ff_dir + os.pathsep + os.environ.get("PATH", "")
     import whisper
-    model = whisper.load_model(model_size, device=WHISPER_DEVICE)
+    on_cpu = WHISPER_DEVICE == "cpu"
+    key = (model_size, WHISPER_DEVICE)
+    model = _whisper_cache.get(key) if on_cpu else None
+    if model is None:
+        model = whisper.load_model(model_size, device=WHISPER_DEVICE)
+        if on_cpu:
+            _whisper_cache[key] = model
     try:
         res = model.transcribe(str(audio_path), language="zh", fp16=False)
         text = re.sub(r"\s+", "", res.get("text", ""))
     finally:
-        # 显式释放：worker 是常驻进程，不放手就一直占着
-        del model
-        release_gpu_memory()
+        # 在 GPU 上必须立刻放手：worker 是常驻进程，不释放就一直占着显存，
+        # 而口型推理需要近 20GB，这近 1GB 足以把它推过临界点。
+        if not on_cpu:
+            del model
+            release_gpu_memory()
     print(f"[tts] ASR 转写参考音频: {text[:60]}")
     return text
 
@@ -335,6 +351,176 @@ def _load_model():
     return _model
 
 
+# ---------------------------------------------------------------------------
+# 常驻合成服务（worker 侧）
+#
+# CosyVoice2 跑在自己的 Python 3.11 解释器里（依赖与本项目隔离），
+# 所以只能以子进程方式调用。一次性子进程的问题是：导入 + 权重加载约 8 秒，
+# 而一条 30 字文案的实际合成只要几秒 —— 每条配音都在重付这 8 秒。
+# 这里维持一个常驻子进程，模型只加载一次，后续请求按行传 JSON。
+# 进程意外退出时自动重建；始终保留一次性路径作为回退，
+# 因为配音是主链路，不能因为这个优化本身出问题就整条断掉。
+# ---------------------------------------------------------------------------
+
+TTS_SERVE = os.environ.get("TTS_SERVE", "1").strip() == "1"
+_serve_proc = None
+_serve_lock = None
+
+
+# 常驻进程响应行的标记。合成过程中的中文诊断日志同样打在 stdout，
+# 没有标记就无法区分"响应"和"日志"，会把日志行当响应解析而误判失败。
+_SERVE_TAG = "PHXRESP "
+
+
+def _read_serve_response(proc):
+    """读到下一条带标记的响应；日志行原样转发到 worker 日志。
+
+    返回 None 表示子进程 stdout 已结束（进程退出）。
+    """
+    import json
+    while True:
+        line = proc.stdout.readline()
+        if not line:
+            return None
+        line = line.rstrip("\r\n")
+        if not line.startswith(_SERVE_TAG):
+            if line.strip():
+                print(f"[tts] {line}")
+            continue
+        try:
+            return json.loads(line[len(_SERVE_TAG):])
+        except Exception:
+            print(f"[tts] 常驻合成响应无法解析: {line[:200]!r}")
+            return {"ok": False, "error": "malformed response"}
+
+
+def _serve_runner():
+    """取（必要时启动）常驻合成子进程。返回 None 表示不可用，调用方回退。"""
+    global _serve_proc
+    if not TTS_SERVE:
+        return None
+    if _serve_proc is not None and _serve_proc.poll() is None:
+        return _serve_proc
+    if not Path(COSY_PY).exists():
+        return None
+
+    script = Path(__file__).resolve().parent / "cosyvoice_runner.py"
+    env = os.environ.copy()
+    env["PATH"] = str(Path(FFMPEG).parent) + os.pathsep + env.get("PATH", "")
+    env["COSY_DIR"] = COSY_DIR
+    env["COSY_MODEL"] = COSY_MODEL
+    env["FFMPEG_BIN"] = FFMPEG
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    for k in ("PYTHONPATH", "PYTHONHOME"):
+        env.pop(k, None)
+    try:
+        proc = subprocess.Popen(
+            [COSY_PY, "-u", str(script), "--serve"],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=None,  # 诊断日志直通 worker 日志，便于排查
+            text=True, encoding="utf-8", errors="replace", env=env)
+    except Exception as e:
+        print(f"[tts] 常驻合成进程启动失败（回退一次性模式）: {e}")
+        return None
+
+    # 等就绪握手：模型加载要几秒，这里等不到就说明环境有问题，直接回退
+    try:
+        deadline = time.time() + float(os.environ.get("TTS_SERVE_BOOT", "180"))
+        while time.time() < deadline:
+            resp = _read_serve_response(proc)
+            if resp is None:
+                break
+            if resp.get("ready"):
+                print("[tts] 常驻合成进程已就绪")
+                _serve_proc = proc
+                return proc
+    except Exception as e:
+        print(f"[tts] 等待常驻进程就绪异常: {e}")
+    try:
+        proc.kill()
+    except Exception:
+        pass
+    print("[tts] 常驻合成进程未就绪，回退一次性模式")
+    return None
+
+
+def shutdown_serve() -> bool:
+    """停掉常驻合成进程，把它占的显存交还给口型推理。
+
+    CosyVoice2 常驻会吃约 3.7GB 显存。口型推理要近 20GB / 全卡 24GB，
+    这 3.7GB 足以把它挤到余量里慢跑：实测同一条 20 秒素材，
+    常驻进程在时推理 6.1 分钟，让位后 4.3 分钟。
+    所以配音"常驻"与口型"独占显卡"必须让后者优先——下一次配音请求
+    会自动把它重新拉起，只多付一次约 8 秒的加载。
+    """
+    global _serve_proc
+    proc, _serve_proc = _serve_proc, None
+    if proc is None or proc.poll() is not None:
+        return False
+    try:
+        # 先关 stdin 让它自己走完循环，超时再强杀
+        try:
+            proc.stdin.close()
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            proc.kill()
+            proc.wait(timeout=10)
+        print("[tts] 已停止常驻合成进程，显存交还口型推理")
+        return True
+    except Exception as e:
+        print(f"[tts] 停止常驻合成进程失败: {e}")
+        return False
+
+
+def _synthesize_via_serve(text, ref_wav, ref_text, out_path,
+                          target_cps) -> Optional[Path]:
+    """走常驻子进程合成。任何异常都返回 None，由调用方回退。"""
+    global _serve_proc, _serve_lock
+    import json
+    import threading
+
+    if _serve_lock is None:
+        _serve_lock = threading.Lock()
+    proc = _serve_runner()
+    if proc is None:
+        return None
+
+    req = json.dumps({
+        "text": text,
+        "ref_wav": str(Path(ref_wav).resolve()),
+        "ref_text": ref_text,
+        "out": str(Path(out_path).resolve()),
+        "target_cps": target_cps if target_cps is not None else TTS_TARGET_CPS,
+        "max_tempo": TTS_MAX_TEMPO,
+    }, ensure_ascii=False)
+
+    # 串行化：共用一个 stdin/stdout 管道，并发写会让响应错配到别的请求上
+    with _serve_lock:
+        try:
+            proc.stdin.write(req + "\n")
+            proc.stdin.flush()
+            resp = _read_serve_response(proc)
+        except Exception as e:
+            print(f"[tts] 常驻合成通信失败（回退一次性模式）: {e}")
+            _serve_proc = None
+            return None
+    if resp is None:
+        print("[tts] 常驻合成进程已退出（回退一次性模式）")
+        _serve_proc = None
+        return None
+    if not resp.get("ok"):
+        print(f"[tts] 常驻合成失败: {resp.get('error')}")
+        return None
+    out = Path(resp.get("out") or out_path)
+    if out.exists() and out.stat().st_size > 0:
+        return out
+    return None
+
+
 def synthesize_local(text: str, ref_wav, ref_text: str, out_path,
                      target_cps: Optional[float] = None) -> Optional[Path]:
     """本机合成入口：转交给 CosyVoice2 自己的解释器执行。"""
@@ -353,6 +539,13 @@ def synthesize_local(text: str, ref_wav, ref_text: str, out_path,
         return None
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 先走常驻进程：省掉每条配音 8 秒的模型加载。失败则落回一次性子进程，
+    # 保证这个优化本身不会成为配音链路的新故障点。
+    res = _synthesize_via_serve(text, ref_wav, ref_text, out_path, target_cps)
+    if res is not None:
+        return res
+
     script = Path(__file__).resolve().parent / "cosyvoice_runner.py"
     cmd = [COSY_PY, "-u", str(script),
            "--ref-wav", str(ref_wav.resolve()),

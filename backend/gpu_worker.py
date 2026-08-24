@@ -63,6 +63,9 @@ app = FastAPI()
 # 放线程池执行，避免阻塞 uvicorn 事件循环导致 /health 探活超时
 # （live 端任务开始前会探活 worker，探活失败会直接跳过口型 → 成片用原素材 → 嘴型对不上）
 _sync_pool = ThreadPoolExecutor(max_workers=1)
+# 参考音频 md5 -> 逐字稿。同素材重复生成时省掉一轮 whisper 转写。
+_REF_TEXT_CACHE = {}
+
 # TTS 独立线程池：合成不该被口型任务阻塞，两者显存占用差距很大
 _tts_pool = ThreadPoolExecutor(max_workers=1)
 # 素材检测：与口型同池串行。检测本身只有几秒，但和推理抢显存不划算。
@@ -223,6 +226,14 @@ def _free_gpu_for_lipsync():
     # face_alignment 只服务 /inspect，口型推理时没有保留它的必要
     if _fa is not None:
         _fa = None
+    # 常驻的 CosyVoice2 合成进程占约 3.7GB。留着它，口型就只能在余量里慢跑
+    # （实测 20 秒素材 4.3 -> 6.1 分钟）。配音的模型加载只要 8 秒，
+    # 用它换回口型近 2 分钟，显然该让位；下次配音请求会自动重新拉起。
+    if _tts is not None:
+        try:
+            _tts.shutdown_serve()
+        except Exception as e:
+            print(f"[lipsync] 停止常驻 TTS 失败（继续推理）: {e}")
     try:
         import gc
         import torch
@@ -377,6 +388,8 @@ async def tts(text: str = Form(...), ref_text: str = Form(""),
             f"text={text[:24]!r} ref_text={rt[:24]!r}"
         )
 
+        ref_md5 = hashlib.md5(raw).hexdigest()
+
         def _run():
             nonlocal rt
             try:
@@ -384,11 +397,22 @@ async def tts(text: str = Form(...), ref_text: str = Form(""),
                     # 逐字稿必须由这里生成：生产机没有 whisper，
                     # 在上游转写会静默失败并留下空文稿，而空文稿会让
                     # zero-shot 按错误音素映射发音，产出整段乱码。
-                    print("[tts] 未提供逐字稿，ASR 转写参考音频")
-                    rt = _tts.transcribe(ref)
-                    if not rt.strip():
-                        err["detail"] = "参考音频转写为空，无法克隆"
-                        return None
+                    #
+                    # 同一条素材反复生成时参考音频是同一段，转写结果必然相同，
+                    # 按音频内容指纹缓存可省掉一整轮 ASR（实测约占单次配音的三成）。
+                    rt = _REF_TEXT_CACHE.get(ref_md5, "")
+                    if rt:
+                        print(f"[tts] 命中逐字稿缓存 md5={ref_md5[:12]}")
+                    else:
+                        print("[tts] 未提供逐字稿，ASR 转写参考音频")
+                        rt = _tts.transcribe(ref)
+                        if not rt.strip():
+                            err["detail"] = "参考音频转写为空，无法克隆"
+                            return None
+                        _REF_TEXT_CACHE[ref_md5] = rt
+                        # 只留最近若干条：worker 常驻，无界字典会一直长
+                        if len(_REF_TEXT_CACHE) > 32:
+                            _REF_TEXT_CACHE.pop(next(iter(_REF_TEXT_CACHE)))
                 res = _tts.synthesize_local(text, ref, rt, out)
                 if not res:
                     return None

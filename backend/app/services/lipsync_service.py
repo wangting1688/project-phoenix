@@ -42,6 +42,15 @@ LIPSYNC_HTTP_TIMEOUT = int(os.environ.get("LIPSYNC_HTTP_TIMEOUT", "3600"))
 # 影调提升（抬暗部）。素材偏暗时开启可显著改善"发黑"观感，置 0 关闭。
 LIPSYNC_GRADE = os.environ.get("LIPSYNC_GRADE", "1").strip() == "1"
 
+# 上传前按配音时长裁剪素材。远程派发要把整条素材推过反向 SSH 隧道，
+# 实测隧道上行约 3.6 MB/s：152MB 的手机素材光传输就要 43 秒。
+# 而推理侧本来就只用「配音时长 + 余量」那一段（外部流水线的 fit_reference
+# 会先裁掉多余帧），多传的部分是纯浪费。这里提前裁掉，传输量通常减半。
+# 置 0 可关闭（例如怀疑裁剪影响选帧时用于对比）。
+LIPSYNC_TRIM_UPLOAD = os.environ.get("LIPSYNC_TRIM_UPLOAD", "1").strip() == "1"
+# 裁剪余量（秒）。留一点富余，避免推理侧因边界取整而缺帧。
+LIPSYNC_TRIM_MARGIN = float(os.environ.get("LIPSYNC_TRIM_MARGIN", "3"))
+
 
 def _probe_source(fp, ffmpeg_bin) -> dict:
     """探测素材分辨率与是否 HDR（用 ffmpeg -i，无需 ffprobe）。"""
@@ -73,6 +82,56 @@ def _probe_source(fp, ffmpeg_bin) -> dict:
     except Exception as e:
         print(f"[lipsync] 素材探测失败: {e}")
     return info
+
+
+def _probe_duration(fp, ffmpeg_bin) -> float:
+    """媒体时长（秒）。生产机没有 ffprobe，从 ffmpeg -i 的输出里解析。"""
+    try:
+        r = subprocess.run([ffmpeg_bin, "-i", str(fp)],
+                           capture_output=True, text=True, timeout=30)
+        m = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", r.stderr or "")
+        if m:
+            return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
+    except Exception as e:
+        print(f"[lipsync] 时长探测失败: {e}")
+    return 0.0
+
+
+def _trim_for_upload(video_path: Path, audio_path: Path, tmp_dir: Path,
+                     ffmpeg_bin: str) -> Path:
+    """按配音时长裁剪素材，只为减少上传量，不改变画面内容。
+
+    用 -c copy 流拷贝：不重新编码，所以既快（秒级）又不损失画质。
+    关键帧对齐会让实际时长略长于请求值，这没有影响——推理侧只取它需要的部分。
+    任何一步不确定就返回原素材：省传输是优化，不值得为它冒失败的风险。
+    """
+    if not LIPSYNC_TRIM_UPLOAD:
+        return video_path
+    try:
+        aud = _probe_duration(audio_path, ffmpeg_bin)
+        vid = _probe_duration(video_path, ffmpeg_bin)
+        if aud <= 0 or vid <= 0:
+            return video_path
+        need = aud + LIPSYNC_TRIM_MARGIN
+        # 只在能省下可观传输量时才裁（阈值 10%），避免为几秒钟多做一次转码
+        if vid <= need or (vid - need) / vid < 0.10:
+            return video_path
+        out = tmp_dir / f"upload_{os.getpid()}_{video_path.stem[:16]}.mp4"
+        r = subprocess.run(
+            [ffmpeg_bin, "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(video_path), "-t", f"{need:.2f}",
+             "-c", "copy", "-movflags", "+faststart", str(out)],
+            capture_output=True, text=True, timeout=300)
+        if r.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            src_mb = video_path.stat().st_size / 1048576
+            out_mb = out.stat().st_size / 1048576
+            print(f"[lipsync] 上传裁剪: {vid:.1f}s/{src_mb:.1f}MB -> "
+                  f"{need:.1f}s/{out_mb:.1f}MB（配音 {aud:.1f}s）")
+            return out
+        print(f"[lipsync] 上传裁剪失败 rc={r.returncode}，按原素材上传")
+    except Exception as e:
+        print(f"[lipsync] 上传裁剪异常（按原素材上传）: {e}")
+    return video_path
 
 
 def _looks_like_mp4(data: bytes, content_type: str = "") -> bool:
@@ -402,6 +461,12 @@ class LipsyncService:
         url = base + "/sync"
         boundary = "----phx_lipsync_%s" % uuid.uuid4().hex
 
+        # 先裁掉配音用不到的尾部，再上传：隧道上行是这条链路上被长期忽略的成本。
+        tmp_dir = Path(tempfile.gettempdir()) / "phx_lipsync"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        upload_path = _trim_for_upload(video_path, audio_path, tmp_dir, FFMPEG)
+        trimmed = upload_path != video_path
+
         def _field(name: str, filename: str, data: bytes, ctype: str) -> bytes:
             head = (
                 f"--{boundary}\r\n"
@@ -410,13 +475,21 @@ class LipsyncService:
             ).encode()
             return head + data + b"\r\n"
 
+        def _cleanup():
+            if trimmed:
+                try:
+                    upload_path.unlink()
+                except OSError:
+                    pass
+
         try:
             body = b"".join([
-                _field("face", "face.mp4", open(video_path, "rb").read(), "video/mp4"),
+                _field("face", "face.mp4", open(upload_path, "rb").read(), "video/mp4"),
                 _field("audio", "audio.mp3", open(audio_path, "rb").read(), "audio/mpeg"),
             ]) + f"--{boundary}--\r\n".encode()
         except Exception as e:
             print(f"[lipsync] 读取本地文件失败: {e}")
+            _cleanup()
             return False
 
         req = urllib.request.Request(url, data=body, method="POST")
@@ -442,6 +515,9 @@ class LipsyncService:
         except Exception as e:
             print(f"[lipsync] 远程 HTTP 推理失败: {e}")
             return False
+        finally:
+            # 裁剪副本只为这一次上传而生，四条返回路径都要清，否则临时目录会随任务增长
+            _cleanup()
 
     # ------------------------------------------------------------------
     # 批量处理：对多段素材分别做口型同步
