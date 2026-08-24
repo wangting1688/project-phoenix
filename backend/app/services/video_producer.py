@@ -108,6 +108,16 @@ class VideoProducer:
                 )
                 db.add(task)
             else:
+                # 同一项目复用同一条任务记录，所以重复提交会让两个后台线程
+                # 抢同一个 task：后来者把状态重置成 waiting，两个线程同时向
+                # GPU worker 发口型请求，一个撞在另一个正占着的显卡上直接 500，
+                # 并把 task 置为 failed —— 先跑的那个即使成功也无处写结果。
+                # 已在跑就直接复用，不重置状态、不再起线程。
+                if task.status in ("waiting", "running"):
+                    logger.info(
+                        "task=%s 已在执行中（status=%s progress=%s），忽略重复提交",
+                        task.id, task.status, task.progress)
+                    return task.id
                 task.status = "waiting"
                 task.progress = 0
                 task.result = None
