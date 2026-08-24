@@ -448,6 +448,18 @@ LUOGEN_PY = os.environ.get(
 # 宁可这边先失败并释放显卡，也不要留下没人来取结果的推理。
 LUOGEN_TIMEOUT = int(os.environ.get("LUOGEN_TIMEOUT", "3300"))
 
+# 推理速度档位。传给外部流水线的 LS_STEPS / LS_GUIDANCE。
+# 2026-08-24 在 20 秒 1088x2336 素材上实测（RTX 5090，显卡空闲）：
+#   steps=20 guidance=1.5  推理 5.65 分钟（流水线原默认）
+#   steps=20 guidance=1.0  推理 3.70 分钟（-35%）
+#   steps=12 guidance=1.0  推理 2.90 分钟（-49%）
+# guidance=1.0 关闭 classifier-free guidance，每步 UNet 求值从两次降为一次。
+# 与原默认逐帧比对：嘴部动态相关性 0.999，嘴部清晰度变化在 1% 内，
+# 也就是这段提速几乎不付出画质代价。故默认取 steps=12 + guidance=1.0。
+# 若某条素材观感变差，把 LUOGEN_STEPS 调回 20 即可，无需改代码。
+LUOGEN_STEPS = os.environ.get("LUOGEN_STEPS", "12")
+LUOGEN_GUIDANCE = os.environ.get("LUOGEN_GUIDANCE", "1.0")
+
 class LuogenEngine(LipsyncEngine):
     """把罗根项目的 run_pipeline.py 当成外部推理服务调用。
 
@@ -511,9 +523,14 @@ class LuogenEngine(LipsyncEngine):
         # 该 venv 自带依赖，清掉可能干扰的继承变量
         for k in ("PYTHONPATH", "PYTHONHOME"):
             env.pop(k, None)
+        # 显式指定速度档位，不依赖外部流水线的默认值——那份代码由罗根项目共用，
+        # 它改默认值不该悄悄改变本产品的出片耗时。
+        env["LS_STEPS"] = LUOGEN_STEPS
+        env["LS_GUIDANCE"] = LUOGEN_GUIDANCE
 
         started = time.time()
-        print(f"[lipsync:luogen] 调用外部流水线 name={name} timeout={LUOGEN_TIMEOUT}s")
+        print(f"[lipsync:luogen] 调用外部流水线 name={name} timeout={LUOGEN_TIMEOUT}s "
+              f"steps={LUOGEN_STEPS} guidance={LUOGEN_GUIDANCE}")
         # 必须用 Popen 而非 subprocess.run：run 超时只杀直接子进程，
         # 而这条流水线会再 spawn 一个 scripts.inference 子进程，真正吃显存的是后者。
         # 事故现场就是父进程退出后孙进程继续占着 18GB 显卡跑了一小时。
