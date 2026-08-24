@@ -225,6 +225,36 @@ def _wrap_lines(text: str, limit: int) -> str:
     return "\\N".join(lines)
 
 
+def _rescale_subtitles(subtitles: List[Dict[str, Any]],
+                       audio_dur: float) -> List[Dict[str, Any]]:
+    """把字幕时间轴按真实配音时长整体缩放。
+
+    上游 build_subtitles 用「字数 // 4」估时长，与真实语速无关：本条素材
+    估出 69 秒而配音实际 66 秒，逐句误差累积后字幕明显跑在口型前后。
+    这里按 真实时长/估算总长 统一缩放，让首尾对齐、中间按比例分布。
+    比逐句强对齐粗，但不需要额外的语音对齐依赖，且能消除累积漂移。
+    """
+    if not subtitles or audio_dur <= 0:
+        return subtitles
+    est_total = max(float(s.get("end_sec") or 0) for s in subtitles)
+    if est_total <= 0:
+        return subtitles
+    k = audio_dur / est_total
+    # 比例太接近 1 就不动，避免无意义的微调掩盖真实问题
+    if abs(k - 1.0) < 0.02:
+        return subtitles
+    print(f"[render] 字幕时间轴按配音校准: 估算 {est_total:.1f}s -> "
+          f"实际 {audio_dur:.1f}s（x{k:.3f}）")
+    out = []
+    for s in subtitles:
+        out.append({
+            **s,
+            "start_sec": float(s.get("start_sec") or 0) * k,
+            "end_sec": float(s.get("end_sec") or 0) * k,
+        })
+    return out
+
+
 def _normalize_subtitles(subtitles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """把上游字幕规整成"每条不超过两行、每行不超过 14 字"的短句。
 
@@ -462,6 +492,11 @@ def render_video(
     # 不再用 drawtext —— 它没有折行能力，一条 47 字的长句会排到约 3000px 宽而
     # 冲出 1088px 的竖屏画面（这是"字幕太长"的根因）。libass 支持折行、描边、
     # 安全边距，且生产机 ffmpeg 已带 ass 滤镜。
+    # 先按真实配音时长校准，再拆分折行；顺序不能反，
+    # 否则拆分后的分摊时长会建立在错误的总长上。
+    if has_audio and tts_audio_path and Path(tts_audio_path).exists():
+        subtitles = _rescale_subtitles(
+            subtitles, _probe_duration_any(Path(tts_audio_path)))
     norm_subs = _normalize_subtitles(subtitles)
     ass_path: Optional[Path] = None
     if norm_subs:

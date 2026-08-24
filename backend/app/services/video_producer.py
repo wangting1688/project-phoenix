@@ -49,12 +49,26 @@ _MARKER_RE = re.compile(
     r"|第[一二三四五六]部分\s*[:：]"
 )
 
+# 镜头/画面提示：大模型常写成「（特写：博主眼神关切）」「（快剪：深夜生活碎片）」
+# 这类导演备注，只给拍摄看，不该被念出来也不该进字幕。
+# 判定依据是括号内含冒号且带镜头术语，避免误删正文里的普通括注。
+_SHOT_NOTE_RE = re.compile(
+    r"[（(](?:特写|近景|远景|中景|全景|空镜|快剪|转场|镜头|画面|字幕|插入|叠化|运镜|B\s*roll)"
+    r"[^）)]*[）)]"
+)
+
 
 def _strip_structure_markers(text: str) -> str:
-    """移除文案里的结构标记，返回可直接朗读的正文。"""
+    """移除文案里的结构标记与镜头提示，返回可直接朗读的正文。
+
+    镜头提示必须一起清掉：2026-08-24 的成片里「（特写：博主眼神关切）」被
+    TTS 逐字念了出来，而字幕用的是未清理的原文，两边字数差 22 字，
+    时间轴随之整体错位。
+    """
     if not text:
         return text
     cleaned = _MARKER_RE.sub("", text)
+    cleaned = _SHOT_NOTE_RE.sub("", cleaned)
     # 标记独占一行时会留下空行，顺手合并
     cleaned = re.sub(r"\n{2,}", "\n", cleaned)
     lines = [ln.strip() for ln in cleaned.splitlines()]
@@ -249,8 +263,11 @@ class VideoProducer:
 
             # Step 4: 视频渲染（ffmpeg 拼接+字幕+配音）
             self._update_task(task_id, "running", 75, "合成视频")
+            # 字幕必须用与配音同一份文本：此前这里传的是未清理的原文，
+            # 而 TTS 走的是清理过的版本，两边差 22 字（结构标记 + 镜头提示），
+            # 字幕内容和时间轴都跟口型对不上。
             result = self._render_video(
-                script=script_text,
+                script=_strip_structure_markers(script_text),
                 footage_path=final_footage,
                 tts_path=tts_path,
                 custom_speaker_id=None,  # TTS 已经生成了，这里不传
