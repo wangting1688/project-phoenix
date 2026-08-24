@@ -57,6 +57,28 @@ def _probe_video_meta(fp: Path) -> Optional[Tuple[int, int, float]]:
         return None
 
 
+def _probe_duration_any(fp: Path) -> float:
+    """成片时长（秒）。ffprobe 优先，不可用时回落 ffmpeg -i。
+
+    生产机只装了 ffmpeg，没有 ffprobe，所以不能只依赖前者，
+    否则时长探测会永久静默失败并悄悄回落到计划值。
+    """
+    try:
+        r = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", str(fp)],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return float(r.stdout.strip())
+    except Exception:
+        pass
+    meta = _probe_video_meta(fp)
+    if meta and meta[2]:
+        return float(meta[2])
+    return 0.0
+
+
 def generate_tts_mp3(text: str, output_path: Path) -> Path:
     """
     用 macOS `say` 命令生成中文 TTS, 再 ffmpeg 转 mp3 16kHz mono.
@@ -299,9 +321,16 @@ def render_video(
         # atrim 截到视频长, 不足部分用 apad 补静音 (TTS 短于视频时长)
         # audio index = n (video 数) + 0 = TTS 是最后一个 input
         audio_idx = n
+        # apad 不带长度参数：补静音直到输出结束，最终长度由下面的 -t 限定。
+        #
+        # 原来写 apad=whole_len={total_dur * 24000}，而 whole_len 的单位是采样数、
+        # 必须按音频真实采样率换算。本地 CosyVoice2 交付的是 16kHz，于是音轨被补到
+        # 72 x 24000/16000 = 108 秒，成片容器声明 108 秒而画面只有 72 秒。
+        # 也不能改用 whole_dur（秒）：生产机的 ffmpeg 是 2018 年静态构建，
+        # 实测报 "Option 'whole_dur' not found"。
+        # 交给 -t 截断则与两个版本都兼容，且不依赖采样率。
         audio_filter = (
-            f"[{audio_idx}:a]atrim=0:{total_dur},asetpts=PTS-STARTPTS,"
-            f"apad=whole_len={int(total_dur * 24000)}[aout]"
+            f"[{audio_idx}:a]atrim=0:{total_dur},asetpts=PTS-STARTPTS,apad[aout]"
         )
         vf_arg = vf_arg + ";" + audio_filter
         map_args = ["-map", "[outv]", "-map", "[aout]"]
@@ -327,7 +356,12 @@ def render_video(
         "-movflags", "+faststart",
     ]
     if has_audio and tts_audio_path and Path(tts_audio_path).exists():
-        cmd += ["-c:a", "aac", "-b:a", "128k", "-shortest"]
+        # 显式 -t 限死总时长，不能只靠 -shortest：线上 ffmpeg 是 2018 年的静态
+        # 构建，-shortest 对 filter_complex 产生的音轨不生效（本地 ffmpeg 9 会
+        # 截断，所以这个问题在本地复现不出来）。缺了它，被 apad 补长的音轨会
+        # 原样写进容器：成片画面 72 秒而容器声明 108 秒，播放器进度条走到
+        # 108 秒、后 36 秒画面停住空转。
+        cmd += ["-c:a", "aac", "-b:a", "128k", "-shortest", "-t", str(total_dur)]
     else:
         cmd += ["-an"]  # 无音频
     cmd.append(str(out_path))
@@ -345,18 +379,21 @@ def render_video(
     if not out_path.exists() or out_path.stat().st_size < 1024:
         raise RuntimeError(f"ffmpeg 输出文件异常: {out_path} ({out_path.stat().st_size if out_path.exists() else 0} bytes)")
 
-    # 6) 用 ffprobe 拿真实时长
-    total_dur = sum(s["_duration"] for s in valid_scenes)
-    try:
-        probe = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-             "-of", "default=noprint_wrappers=1:nokey=1", str(out_path)],
-            capture_output=True, text=True, timeout=10,
-        )
-        if probe.returncode == 0 and probe.stdout.strip():
-            total_dur = float(probe.stdout.strip())
-    except Exception:
-        pass
+    # 6) 取成片真实时长。
+    # 生产机没有 ffprobe（实测 which ffprobe 为空），原来这里 except 静默吞掉，
+    # 于是 duration 一直回落到"计划时长"而非成片实际长度 —— 成片容器 108 秒
+    # 却入库 72 秒，两边不一致时反而掩盖了渲染缺陷。改为 ffprobe 不可用时
+    # 用 ffmpeg -i 解析（本项目其他地方也用这个办法），并把偏差打出来。
+    planned_dur = sum(s["_duration"] for s in valid_scenes)
+    total_dur = planned_dur
+    probed = _probe_duration_any(out_path)
+    if probed > 0:
+        total_dur = probed
+        if abs(probed - planned_dur) > 1.5:
+            print(f"[render] 警告: 成片时长 {probed:.1f}s 与计划 {planned_dur}s "
+                  f"偏差过大，请检查音轨补齐与 -t 截断是否生效")
+    else:
+        print(f"[render] 无法探测成片时长，按计划时长 {planned_dur}s 记账")
 
     # 6.5) 生成封面缩略图（取第 1 秒帧）
     cover_filename = out_filename.replace(".mp4", "_cover.jpg")
