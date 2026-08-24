@@ -539,9 +539,11 @@ class LuogenEngine(LipsyncEngine):
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             encoding="utf-8", errors="replace",
         )
+        timed_out = False
         try:
             stdout, stderr = proc.communicate(timeout=LUOGEN_TIMEOUT)
         except subprocess.TimeoutExpired:
+            timed_out = True
             print(f"[lipsync:luogen] 超时 {LUOGEN_TIMEOUT}s，终止流水线进程树")
             kill_process_tree(proc.pid)
             stdout, stderr = proc.communicate()
@@ -553,7 +555,22 @@ class LuogenEngine(LipsyncEngine):
         produced = pipeline_dir / "output" / f"{name}.mp4"
         if not (produced.exists() and produced.stat().st_size > 0):
             tail = (stderr or stdout or "")[-1500:]
-            print(f"[lipsync:luogen] 流水线未产出成片 rc={proc.returncode}\n{tail}")
+            # 超时和真实报错要能一眼区分：被杀死的进程 returncode 也可能是 0，
+            # 只看 rc 会把"没跑完"误读成"跑完但没产出"，排查时白绕一圈。
+            if timed_out:
+                # 从 tqdm 进度里捞出实际进度，判断是素材太长还是被别的程序抢了显卡
+                import re as _re
+                m = _re.findall(r"Doing inference[^|]*\|[^|]*\|\s*(\d+)/(\d+)"
+                                r"\s*\[([^<]+)<([^,]+),\s*([^\]]+)\]", stderr or "")
+                extra = ""
+                if m:
+                    done, total, elapsed, eta, rate = m[-1]
+                    extra = (f" 进度 {done}/{total} 窗口，已用 {elapsed}，"
+                             f"预计还需 {eta}，速度 {rate}")
+                print(f"[lipsync:luogen] 推理超时（上限 {LUOGEN_TIMEOUT}s）未完成。"
+                      f"{extra}\n若速度明显偏慢，检查是否有其他程序占用显卡。")
+            else:
+                print(f"[lipsync:luogen] 流水线未产出成片 rc={proc.returncode}\n{tail}")
             # 失败路径也要清理：work/ 下是无损帧与素材副本，单次可达数 GB，
             # 只在成功分支清会让磁盘随失败次数持续膨胀。
             shutil.rmtree(staging, ignore_errors=True)
