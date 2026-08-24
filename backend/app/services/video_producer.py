@@ -149,6 +149,20 @@ class VideoProducer:
             logger.warning("task=%s 不存在，终止生产", task_id)
             return
 
+        # 项目有效性在这里再确认一次。入口 API 已经拦了，但生产是后台线程：
+        # 任务排队/重跑期间项目可能已被删除，那时跑完也没有任何界面能展示成片
+        # （作品列表与详情都会过滤已删除项目）。宁可明确失败，
+        # 也不要让用户等十几分钟去换一个看不到的结果。
+        project = self.db.query(ContentProject).filter(
+            ContentProject.id == self.project_id,
+            ContentProject.deleted_at.is_(None),
+        ).first()
+        if not project:
+            msg = "作品已删除，生成已取消。请新建作品后重新生成。"
+            logger.warning("task=%s 项目 %s 已删除，取消生产", task_id, self.project_id)
+            self._update_task(task_id, "failed", 0, error=msg)
+            return
+
         params = {}
         try:
             params = json.loads(task.result or "{}")

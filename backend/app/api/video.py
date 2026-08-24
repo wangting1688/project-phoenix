@@ -213,16 +213,21 @@ def generate_video(
     完整流程：文案 → TTS配音 → 口型同步 → 视频渲染 → 输出成片
     返回 task_id，通过 /tasks/{task_id} 轮询进度。
     """
+    # 必须同时排除已软删除的作品。漏掉 deleted_at 的后果不是报错而是"白跑"：
+    # 2026-08-24 任务 37 就在一个 8-20 已删除的项目上跑完了全流程并标记成功，
+    # 但作品列表与详情接口都会过滤掉已删除项目，用户等了十几分钟、显卡跑了一轮，
+    # 最后在页面上找不到成片，也没有任何解释。
     project = (
         db.query(ContentProject)
         .filter(
             ContentProject.id == project_id,
             ContentProject.user_id == current_user.id,
+            ContentProject.deleted_at.is_(None),
         )
         .first()
     )
     if not project:
-        raise HTTPException(status_code=404, detail="项目不存在")
+        raise HTTPException(status_code=404, detail="项目不存在或已删除")
 
     task_id = VideoProducer.create_task(
         project_id=project_id,
