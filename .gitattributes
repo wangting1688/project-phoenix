@@ -1,0 +1,59 @@
+# ===== 行尾符统一（2026-10-13 建立）=====
+#
+# 背景：此前仓库没有 .gitattributes，且 core.autocrlf=true，导致
+#   库内 = LF，工作区 = CRLF（部分文件还是 mixed）。
+# 实测造成的真实故障：scripts/deploy.sh 首行是 "#!/usr/bin/env bash\r"，
+# 连同 launch_beta.sh / setup_lipsync_gpu.sh / deploy-phase2/*.sh /
+# backup_sqlite.sh 工作区都是 CRLF —— 这类脚本一旦 scp 到 Linux 执行，
+# bash 会把 \r 当成解释器路径的一部分，直接报
+#   bad interpreter: /usr/bin/env: 'bash\r': No such file or directory
+#
+# 这里采用「定向声明」而不是全库 `* text=auto eol=lf`：
+# 全库强制 eol=lf 会一次性重写 232 个工作区文件（编辑器全部标脏、构建缓存失效），
+# 而增量收益很小——库内 300 个文本文件本来就已是 LF。定向方案只解决真正
+# 会出问题的类型，改动面可控。
+#
+# 注意：.gitattributes 的优先级高于 core.autocrlf。
+# 凡是在这里声明了 eol 的文件，工作区行尾就由本文件决定，不再被 autocrlf 改写。
+
+# ---- 默认：仍交由 Git 自动识别文本，入库统一为 LF ----
+# 不指定 eol 时，工作区行尾仍按 core.autocrlf 走（Windows ⇒ CRLF），保持现状。
+* text=auto
+
+# ---- Linux 上执行的脚本：工作区也必须是 LF ----
+# 这些文件会被放到服务器执行，CRLF 会直接导致无法运行。
+*.sh    text eol=lf
+*.bash  text eol=lf
+
+# ---- Windows 原生脚本：工作区保留 CRLF ----
+# 不写 eol=crlf，避免把库内也变成 CRLF；交给 autocrlf 决定工作区即可，
+# 库内依然归一为 LF，保持「库内统一 LF」的目标。
+*.ps1   text
+*.bat   text
+*.cmd   text
+
+# ---- 二进制文件：禁止任何换行转换 ----
+# 不加这些声明时，Git 靠启发式判断，个别文件可能被误判为文本而遭破坏。
+*.png          binary
+*.jpg          binary
+*.jpeg         binary
+*.gif          binary
+*.ico          binary
+*.webp         binary
+*.mp3          binary
+*.mp4          binary
+*.wav          binary
+*.pt           binary
+*.pth          binary
+*.onnx         binary
+*.safetensors  binary
+*.db           binary
+*.sqlite       binary
+*.zip          binary
+*.gz           binary
+*.woff         binary
+*.woff2        binary
+*.ttf          binary
+*.otf          binary
+*.pdf          binary
+*.pyc          binary
