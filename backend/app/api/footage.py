@@ -351,3 +351,143 @@ def restore_demo_footages(
     from app.services.demo_assets import restore_demo_footages
     count = restore_demo_footages(db, current_user.id)
     return ApiResponse(data={"restored_count": count})
+
+
+# ===== H3 图生视频：主播照片上传 =====
+ANCHOR_DIR = os.path.join(settings.STORAGE_PATH, "anchor_portraits")
+os.makedirs(ANCHOR_DIR, exist_ok=True)
+ANCHOR_IMG_TYPES = {"image/jpeg", "image/png", "image/webp"}
+ANCHOR_EXT = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+
+
+@router.post("/anchor-portrait", response_model=ApiResponse[dict])
+async def upload_anchor_portrait(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """上传一张主播正面照，供 H3 图生视频做人像锚点。返回 person_image 路径。"""
+    ctype = file.content_type or ""
+    if ctype not in ANCHOR_IMG_TYPES:
+        raise HTTPException(status_code=400, detail="请上传 jpg/png/webp 格式的照片")
+    content = await file.read()
+    if not content or len(content) < 1024:
+        raise HTTPException(status_code=400, detail="照片内容为空或过小")
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="照片不能超过 20MB")
+    ext = ANCHOR_EXT.get(ctype, ".jpg")
+    name = f"anchor_{current_user.id}_{uuid.uuid4().hex[:10]}{ext}"
+    user_dir = os.path.join(ANCHOR_DIR, str(current_user.id))
+    os.makedirs(user_dir, exist_ok=True)
+    fpath = os.path.join(user_dir, name)
+    with open(fpath, "wb") as f:
+        f.write(content)
+    # 返回相对 storage_root(backend/) 的路径：storage/anchor_portraits/<uid>/<file>，
+    # 与 video_producer._resolve_storage_path 的相对解析基准一致。
+    rel = os.path.relpath(fpath, os.path.dirname(settings.STORAGE_PATH.rstrip("/\\"))).replace("\\", "/")
+    if rel == "." or rel.startswith(".."):
+        rel = "storage/anchor_portraits/" + os.path.join(str(current_user.id), name).replace("\\", "/")
+    static_rel = rel[len("storage/"):] if rel.startswith("storage/") else rel
+    return ApiResponse(data={"person_image": rel, "url": f"/static/{static_rel}", "filename": name})
+
+
+@router.get("/anchor-portraits", response_model=ApiResponse[dict])
+def list_anchor_portraits(
+    current_user: User = Depends(get_current_user),
+):
+    """列出当前用户上传的主播照片，供 H3 人物素材库使用。"""
+    user_dir = os.path.join(ANCHOR_DIR, str(current_user.id))
+    items = []
+    if os.path.isdir(user_dir):
+        for name in sorted(os.listdir(user_dir)):
+            if not os.path.isfile(os.path.join(user_dir, name)):
+                continue
+            rel = f"storage/anchor_portraits/{current_user.id}/{name}"
+            static_rel = f"anchor_portraits/{current_user.id}/{name}"
+            items.append({
+                "filename": name,
+                "person_image": rel,
+                "url": f"/static/{static_rel}",
+            })
+    return ApiResponse(data={"items": items})
+
+
+@router.delete("/anchor-portraits/{filename}", response_model=ApiResponse[dict])
+def delete_anchor_portrait(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+):
+    """删除当前用户的一张主播照片。"""
+    if not re.fullmatch(r"anchor_\d+_[0-9a-f]{10}\.(jpg|png|webp)", filename):
+        raise HTTPException(status_code=400, detail="非法文件名")
+    user_dir = os.path.join(ANCHOR_DIR, str(current_user.id))
+    fpath = os.path.join(user_dir, filename)
+    if not os.path.isfile(fpath):
+        raise HTTPException(status_code=404, detail="照片不存在")
+    os.remove(fpath)
+    return ApiResponse(data={"success": True, "filename": filename})
+
+
+# ===== H3 自定义场景图（定场图/场景锚点图）=====
+ANCHOR_SCENE_DIR = os.path.join(settings.STORAGE_PATH, "anchor_scenes")
+os.makedirs(ANCHOR_SCENE_DIR, exist_ok=True)
+
+
+@router.post("/anchor-scenes", response_model=ApiResponse[dict])
+async def upload_anchor_scene(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    """上传一张自定义讲解场景图，H3 生成时用作场景锚点/定场图。"""
+    ctype = file.content_type or ""
+    if ctype not in ANCHOR_IMG_TYPES:
+        raise HTTPException(status_code=400, detail="请上传 jpg/png/webp 格式的图片")
+    content = await file.read()
+    if not content or len(content) < 1024:
+        raise HTTPException(status_code=400, detail="图片内容为空或过小")
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="图片不能超过 20MB")
+    ext = ANCHOR_EXT.get(ctype, ".jpg")
+    name = f"scene_{current_user.id}_{uuid.uuid4().hex[:10]}{ext}"
+    user_dir = os.path.join(ANCHOR_SCENE_DIR, str(current_user.id))
+    os.makedirs(user_dir, exist_ok=True)
+    fpath = os.path.join(user_dir, name)
+    with open(fpath, "wb") as f:
+        f.write(content)
+    rel = "storage/anchor_scenes/" + os.path.join(str(current_user.id), name).replace("\\", "/")
+    static_rel = f"anchor_scenes/{current_user.id}/{name}"
+    return ApiResponse(data={"scene_image": rel, "url": f"/static/{static_rel}", "filename": name})
+
+
+@router.get("/anchor-scenes", response_model=ApiResponse[dict])
+def list_anchor_scenes(
+    current_user: User = Depends(get_current_user),
+):
+    """列出当前用户上传的自定义场景图。"""
+    user_dir = os.path.join(ANCHOR_SCENE_DIR, str(current_user.id))
+    items = []
+    if os.path.isdir(user_dir):
+        for name in sorted(os.listdir(user_dir)):
+            if not os.path.isfile(os.path.join(user_dir, name)):
+                continue
+            items.append({
+                "filename": name,
+                "scene_image": f"storage/anchor_scenes/{current_user.id}/{name}",
+                "url": f"/static/anchor_scenes/{current_user.id}/{name}",
+            })
+    return ApiResponse(data={"items": items})
+
+
+@router.delete("/anchor-scenes/{filename}", response_model=ApiResponse[dict])
+def delete_anchor_scene(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+):
+    """删除当前用户的一张自定义场景图。"""
+    if not re.fullmatch(r"scene_\d+_[0-9a-f]{10}\.(jpg|png|webp)", filename):
+        raise HTTPException(status_code=400, detail="非法文件名")
+    user_dir = os.path.join(ANCHOR_SCENE_DIR, str(current_user.id))
+    fpath = os.path.join(user_dir, filename)
+    if not os.path.isfile(fpath):
+        raise HTTPException(status_code=404, detail="场景图不存在")
+    os.remove(fpath)
+    return ApiResponse(data={"success": True, "filename": filename})

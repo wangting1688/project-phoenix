@@ -43,7 +43,7 @@ from app.models.voice_profile import UserVoiceProfile
 
 
 # ===== 业务规则常量 =====
-MAX_PROFILES_PER_USER = 1
+MAX_PROFILES_PER_USER = 3
 # 火山原生支持的格式
 VOLC_AUDIO_FORMATS = {"mp3", "wav", "ogg", "m4a", "aac", "pcm"}
 # 浏览器 MediaRecorder 输出格式, 需转码后再送火山
@@ -68,11 +68,6 @@ def _demos_dir(user_id: int) -> Path:
     d = _storage_root() / "voice_demos" / str(user_id)
     d.mkdir(parents=True, exist_ok=True)
     return d
-
-
-def _is_volc_configured() -> bool:
-    """训练/合成共用同一 X-Api-Key, 一个就够"""
-    return bool(settings.VOLC_TTS_API_KEY) and bool(settings.VOLC_TTS_BASE_URL)
 
 
 def _local_tts_enabled() -> bool:
@@ -100,115 +95,6 @@ def _is_production() -> bool:
         return not settings.DEBUG
     except Exception:
         return False
-
-
-def _volc_post(path: str, body: Dict[str, Any], timeout: int = None) -> Dict[str, Any]:
-    """
-    统一封装: 调火山 openspeech REST 接口
-    返回 dict (含 code/message 等字段); 失败抛 RuntimeError
-    """
-    if not _is_volc_configured():
-        raise RuntimeError("火山语音未配置 (缺 VOLC_TTS_API_KEY)")
-    url = settings.VOLC_TTS_BASE_URL.rstrip("/") + path
-    data = json.dumps(body).encode("utf-8")
-    headers = {
-        "Content-Type": "application/json",
-        "X-Api-Key": settings.VOLC_TTS_API_KEY,
-        "X-Api-Request-Id": str(uuid.uuid4()),
-    }
-    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
-    timeout = timeout or settings.VOLC_TTS_TIMEOUT
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        # 火山业务错误也带 code/message, 解析出来
-        try:
-            return json.loads(e.read().decode("utf-8"))
-        except Exception:
-            raise RuntimeError(f"HTTP {e.code}: {e.reason}")
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"网络错误: {e.reason}")
-    except TimeoutError:
-        raise RuntimeError(f"调用超时 (>{timeout}s)")
-
-
-# ===== 训练接口 =====
-def _call_volc_train(profile: UserVoiceProfile, sample_bytes: bytes, sample_format: str,
-                     reference_text: str = "") -> Dict[str, Any]:
-    """
-    调火山方舟 voice_clone 训练接口 (声音复刻 2.0, model_type=5)
-
-    要点 (实测):
-    - reference_text 必须与音频内容高度一致, 否则 45001109 WERError (阈值 0.25)
-    - 成功返回 icl_speaker_id (火山内部音色 ID), 合成时优先用它
-    - demo_audio 可能是 base64 或 speaker_status[].demo_audio 里的 URL
-    """
-    body = {
-        "speaker_id": "custom_speaker_id",  # 固定值
-        "custom_speaker_id": profile.custom_speaker_id,
-        "audio": {
-            "data": base64.b64encode(sample_bytes).decode("ascii"),
-            "format": sample_format,
-        },
-        "text": reference_text or profile.reference_text or "",
-        "language": profile.language or 0,
-        "extra_params": {
-            "model_type": 5,  # 复刻 2.0
-            "demo_text": profile.demo_text or "你好，这是我的专属声音测试。",
-        },
-    }
-    resp = _volc_post("/api/v3/tts/voice_clone", body, timeout=60)
-
-    if resp.get("code") not in (0, None):
-        return {
-            "code": resp.get("code", -1),
-            "message": resp.get("message", "训练失败"),
-            "status": 3,  # Failed
-            "available_training_times": resp.get("available_training_times", 0),
-            "demo_audio": None,
-            "icl_speaker_id": None,
-        }
-
-    # 取 icl_speaker_id (优先顶层, 再看 speaker_status 里 model_type=5 的)
-    icl_id = resp.get("icl_speaker_id")
-    demo_url = None
-    for st in (resp.get("speaker_status") or []):
-        if st.get("model_type") == 5:
-            icl_id = st.get("icl_speaker_id") or icl_id
-            demo_url = st.get("demo_audio") or demo_url
-    return {
-        "code": 0,
-        "message": resp.get("message", "ok"),
-        "status": resp.get("status", 1),  # 1=Training 2=Success 3=Failed 4=Active
-        "available_training_times": resp.get("available_training_times", 0),
-        "demo_audio": resp.get("demo_audio"),
-        "demo_audio_url": demo_url,
-        "icl_speaker_id": icl_id,
-    }
-
-
-# ===== TTS 合成接口 =====
-def _call_volc_synthesize(custom_speaker_id: str, text: str, lang: int = 0) -> Optional[bytes]:
-    """
-    克隆音色合成 (resource_id=volc.megatts.voiceclone, 实测正确)
-    失败返回 None, 由上层降级到官方音色
-    """
-    if not _is_volc_configured() or not custom_speaker_id:
-        return None
-    from app.services.volc.tts_http import synthesize_http, RESOURCE_CLONE_SYNTH
-    return synthesize_http(text, speaker=custom_speaker_id, resource_id=RESOURCE_CLONE_SYNTH)
-
-
-def _call_volc_official_tts(text: str) -> Optional[bytes]:
-    """
-    官方精品音色合成 (已开通 volc.service_type.10029, 实测可用)
-    声纹未就绪时的主力方案, 优于 macOS say
-    """
-    if not _is_volc_configured():
-        return None
-    from app.services.volc.tts_http import synthesize_http
-    return synthesize_http(text)
 
 
 # ===== 音频转码 (浏览器录音 -> 火山可用格式) =====
@@ -361,19 +247,8 @@ def upload_sample(db, user_id, file_bytes, filename, name, demo_text, language=0
     db.commit()
     db.refresh(profile)
 
-    # 火山配置齐时立即触发训练; 否则保留 training 状态
-    if _is_volc_configured():
-        try:
-            return train_voice(db, profile.id, user_id)
-        except Exception as e:
-            # 训练失败标记为 failed, 不阻塞上传
-            profile.status = "failed"
-            profile.volc_status = 3
-            profile.error_message = f"训练调用失败: {str(e)[:200]}"
-            db.commit()
-            db.refresh(profile)
-            return profile
-    return profile
+    # 只走本地 CosyVoice2 克隆：无需火山训练，样本+逐字稿即可合成。
+    return train_voice(db, profile.id, user_id)
 
 
 def train_voice(db, profile_id, user_id):
@@ -387,85 +262,30 @@ def train_voice(db, profile_id, user_id):
     if not profile.sample_path or not Path(profile.sample_path).exists():
         raise ValueError("样本文件丢失, 请重新上传")
 
-    if not _is_volc_configured():
-        # 未配置火山, 保持 training 占位, 给前端明确提示
-        profile.error_message = "火山语音未配置 (缺 VOLC_TTS_API_KEY), 当前走 fallback"
-        db.commit()
-        db.refresh(profile)
-        return profile
-
-    # 已训练成功的音色不允许重训 (火山会报 custom_speaker_id is activated)
-    if profile.status == "active" and profile.icl_speaker_id:
-        raise ValueError("该声纹已训练完成, 无需重复训练。如需重新训练请先删除后重新上传样本")
-
-    sample_bytes = Path(profile.sample_path).read_bytes()
-    fmt = Path(profile.sample_path).suffix.lstrip(".")
-
-    try:
-        result = _call_volc_train(profile, sample_bytes, fmt, profile.reference_text or "")
-    except Exception as e:
-        profile.error_message = f"训练调用失败: {e}"
-        profile.volc_status = 3  # Failed
-        profile.status = "failed"
-        db.commit()
-        db.refresh(profile)
-        return profile
-
-    profile.volc_status = result.get("status", 1)
-    profile.available_training_times = result.get("available_training_times", 0)
-    msg = result.get("message") or ""
-    if result.get("code") != 0:
-        # "custom_speaker_id is activated" 说明音色已就绪, 不是失败
-        if "activated" in msg.lower():
-            profile.status = "active"
-            profile.volc_status = 2
-            profile.error_message = None
-            db.commit()
-            db.refresh(profile)
-            return profile
-        code = result.get("code")
-        if code == 45001109 or "wer" in msg.lower():
-            profile.error_message = "朗读内容与示例文本差异过大, 请照着屏幕上的文字逐字朗读后重试"
-        else:
-            profile.error_message = msg or "训练失败"
-        # 业务错误标记为 failed
-        profile.status = "failed"
-        profile.volc_status = 3
-    else:
-        profile.error_message = None
-
-    if result.get("status") in (2, 4):  # Success / Active
+    # 本地 CosyVoice2 零样本克隆：不需要训练授权，样本+逐字稿即可合成。
+    if _local_tts_enabled():
         profile.status = "active"
-        # 火山内部音色 ID: 合成时用它 (比 custom_speaker_id 更可靠)
-        icl_id = result.get("icl_speaker_id")
-        if icl_id:
-            profile.icl_speaker_id = icl_id
-        # 试听音频: 优先 base64, 其次下载 URL
-        demo_path = _demos_dir(user_id) / f"{profile.id}.mp3"
-        saved = False
-        demo_b64 = result.get("demo_audio")
-        if demo_b64:
-            try:
-                pad = demo_b64 + "=" * (-len(demo_b64) % 4)
-                demo_path.write_bytes(base64.b64decode(pad))
-                saved = demo_path.stat().st_size > 1024
-            except Exception:
-                saved = False
-        if not saved and result.get("demo_audio_url"):
-            try:
-                with urllib.request.urlopen(result["demo_audio_url"], timeout=20) as r:
-                    demo_path.write_bytes(r.read())
-                saved = True
-            except Exception:
-                saved = False
-        if saved:
-            profile.demo_audio_path = str(demo_path)
-    elif result.get("status") == 3:
-        profile.status = "failed"
+        profile.volc_status = 4
+        profile.error_message = None
+        try:
+            demo_path = _demos_dir(user_id) / f"{profile.id}.mp3"
+            demo_text = profile.demo_text or "你好，这是我的专属声音测试。"
+            out = synthesize(
+                db, profile.custom_speaker_id or "", demo_text, demo_path,
+                language=profile.language or 0,
+                profile_id=profile.id,
+                reference_audio=profile.sample_path,
+                reference_text=profile.reference_text,
+            )
+            if out and Path(out).exists() and Path(out).stat().st_size > 1024:
+                profile.demo_audio_path = str(out)
+        except Exception:
+            pass
+        db.commit()
+        db.refresh(profile)
+        return profile
 
-    db.commit()
-    db.refresh(profile)
-    return profile
+    raise RuntimeError("本地 CosyVoice2 未启用，无法克隆声音")
 
 
 def synthesize(db, custom_speaker_id, text, output_path, language=0,
@@ -484,7 +304,7 @@ def synthesize(db, custom_speaker_id, text, output_path, language=0,
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 1. 本地 CosyVoice2 zero-shot 克隆（首选）
+    # 只走本地 CosyVoice2 zero-shot 克隆
     if _local_tts_enabled():
         try:
             result = _synthesize_local_clone(
@@ -496,30 +316,13 @@ def synthesize(db, custom_speaker_id, text, output_path, language=0,
             )
             if result:
                 return result
-            logger.warning("本地 CosyVoice2 合成未成功，尝试后备方案")
+            logger.warning("本地 CosyVoice2 合成未成功")
         except Exception as e:
-            logger.warning("本地 CosyVoice2 合成异常(%s)，尝试后备方案", e)
+            logger.warning("本地 CosyVoice2 合成异常(%s)", e)
 
-    volc_ok = _is_volc_configured()
-
-    # 2. 火山克隆声纹 (需 volc.megatts.timbre 授权)
-    if custom_speaker_id and volc_ok:
-        mp3_bytes = _call_volc_synthesize(custom_speaker_id, text, language)
-        if mp3_bytes:
-            output_path.write_bytes(mp3_bytes)
-            return output_path
-
-    # 3. 火山官方精品音色
-    if volc_ok:
-        mp3_bytes = _call_volc_official_tts(text)
-        if mp3_bytes:
-            output_path.write_bytes(mp3_bytes)
-            return output_path
-
-    # 4. 本地兜底 (仅 macOS; 开发/测试模式)
     if _is_production():
         raise RuntimeError(
-            "配音生成失败：本地 CosyVoice2 不可用且火山 TTS 无法调用。"
+            "配音生成失败：本地 CosyVoice2 不可用。"
             "请检查本机 TTS worker 是否存活（/health 的 tts_available），"
             "或声纹档案是否有可用的参考音频与逐字稿"
         )
@@ -615,20 +418,40 @@ def test_synthesize(db, profile_id, user_id, text):
     custom_id = profile.custom_speaker_id if profile.status == "active" else None
 
     out = _demos_dir(user_id) / f"test_{profile_id}_{int(time.time())}.mp3"
+    # 关键：必须传 profile_id，本地 zero-shot 克隆才能从声纹档案取到
+    # 参考音频(sample_path)+逐字稿(reference_text)。仅传 custom_speaker_id 时，
+    # status 非 active(=None) 会让 _resolve_reference 拿不到参考音频 → 501。
     return synthesize(
         db,
         custom_speaker_id=custom_id,
         text=text or profile.demo_text,
         output_path=out,
         language=profile.language or 0,
+        profile_id=profile_id,
     )
 
 
 def list_profiles(db, user_id):
-    return db.query(UserVoiceProfile).filter(
+    profiles = db.query(UserVoiceProfile).filter(
         UserVoiceProfile.user_id == user_id,
         UserVoiceProfile.status != "deleted",
     ).order_by(UserVoiceProfile.created_at.desc()).all()
+    # 懒迁移：历史火山训练失败/卡在 training 的档案，只要有本地样本，
+    # 就按本地 CosyVoice2 克隆标记为可用，无需重新录制。
+    changed = False
+    for p in profiles:
+        if p.status in ("training", "failed") and p.sample_path:
+            sp = Path(p.sample_path)
+            if not sp.is_absolute():
+                sp = _storage_root() / p.sample_path
+            if sp.exists():
+                p.status = "active"
+                p.volc_status = 4
+                p.error_message = None
+                changed = True
+    if changed:
+        db.commit()
+    return profiles
 
 
 def delete_profile(db, profile_id, user_id):

@@ -312,6 +312,11 @@ def _ass_escape(text: str) -> str:
                 .replace("\r", " "))
 
 
+def _strip_punctuation(text: str) -> str:
+    """去掉标点，抖音式字幕干净工整；只保留汉字/数字/字母/空格。"""
+    return re.sub(r"[^\w\s\u4e00-\u9fff]", "", text).strip()
+
+
 def _ass_time(sec: float) -> str:
     sec = max(0.0, sec)
     h = int(sec // 3600)
@@ -352,7 +357,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     lines = [header]
     for sub in subtitles:
-        text = _wrap_lines(_ass_escape(sub["text"]), SUB_MAX_CHARS_PER_LINE)
+        text = _wrap_lines(_strip_punctuation(_ass_escape(sub["text"])),
+                           SUB_MAX_CHARS_PER_LINE)
         lines.append(
             f"Dialogue: 0,{_ass_time(sub['start_sec'])},"
             f"{_ass_time(sub['end_sec'])},Default,,0,0,0,,{text}"

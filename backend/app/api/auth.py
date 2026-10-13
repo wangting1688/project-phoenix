@@ -9,6 +9,7 @@ from app.schemas import UserCreate, UserLogin, UserResponse, LoginResponse, Curr
 from app.services import user_service
 from app.api.deps import get_current_user
 from app.models import User
+from urllib.parse import quote, urlencode
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -85,5 +86,105 @@ def get_me(current_user: User = Depends(get_current_user)):
             role=current_user.role,
             tenant_id=current_user.tenant_id,
             content_profile={"style": "故事型", "category": "健康"},
+        )
+    )
+
+
+@router.get("/wechat/config", response_model=ApiResponse[dict])
+def wechat_config():
+    enabled = bool(settings.WECHAT_APP_ID and settings.WECHAT_APP_SECRET)
+    return ApiResponse(
+        data={
+            "enabled": enabled,
+            "app_id": settings.WECHAT_APP_ID or "",
+        }
+    )
+
+
+@router.get("/wechat/login-url", response_model=ApiResponse[dict])
+def wechat_login_url(redirect_uri: str = ""):
+    if not settings.WECHAT_APP_ID or not settings.WECHAT_APP_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="微信登录未配置，请先配置 WECHAT_APP_ID / WECHAT_APP_SECRET",
+        )
+    target = redirect_uri or settings.WECHAT_REDIRECT_URI or ""
+    if not target:
+        raise HTTPException(
+            status_code=400,
+            detail="缺少 redirect_uri，请传入前端登录页地址",
+        )
+    params = urlencode({
+        "appid": settings.WECHAT_APP_ID,
+        "redirect_uri": target,
+        "response_type": "code",
+        "scope": "snsapi_userinfo",
+        "state": "phoenix_wechat",
+    })
+    return ApiResponse(
+        data={"url": f"https://open.weixin.qq.com/connect/oauth2/authorize?{params}#wechat_redirect"}
+    )
+
+
+@router.get("/wechat/callback", response_model=ApiResponse[LoginResponse])
+def wechat_callback(code: str, db: Session = Depends(get_db)):
+    if not settings.WECHAT_APP_ID or not settings.WECHAT_APP_SECRET:
+        raise HTTPException(
+            status_code=503,
+            detail="微信登录未配置",
+        )
+    import requests as _rq
+
+    token_resp = _rq.get(
+        "https://api.weixin.qq.com/sns/oauth2/access_token",
+        params={
+            "appid": settings.WECHAT_APP_ID,
+            "secret": settings.WECHAT_APP_SECRET,
+            "code": code,
+            "grant_type": "authorization_code",
+        },
+        timeout=15,
+    ).json()
+    if token_resp.get("errcode") or not token_resp.get("openid"):
+        raise HTTPException(
+            status_code=401,
+            detail=f"微信授权失败: {token_resp.get('errmsg') or 'invalid code'}",
+        )
+
+    openid = token_resp["openid"]
+    unionid = token_resp.get("unionid") or None
+    nickname = ""
+    avatar = ""
+    try:
+        userinfo = _rq.get(
+            "https://api.weixin.qq.com/sns/userinfo",
+            params={
+                "access_token": token_resp["access_token"],
+                "openid": openid,
+                "lang": "zh_CN",
+            },
+            timeout=15,
+        ).json()
+        nickname = (userinfo.get("nickname") or "").strip()
+        avatar = (userinfo.get("headimgurl") or "").strip()
+    except Exception:
+        pass
+
+    user = user_service.get_user_by_openid(db, openid)
+    if user:
+        user_service.update_wechat_profile(db, user, nickname, avatar, unionid)
+    else:
+        user = user_service.create_wechat_user(
+            db, openid, nickname=nickname, avatar=avatar, unionid=unionid
+        )
+
+    access_token = create_access_token(
+        data={"sub": str(user.id)},
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    return ApiResponse(
+        data=LoginResponse(
+            token=access_token,
+            user=UserResponse.model_validate(user),
         )
     )

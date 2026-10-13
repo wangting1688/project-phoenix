@@ -61,6 +61,7 @@ class Script(Base, BaseModel):
     content = Column(Text)
     version = Column(Integer, default=1)
     score = Column(DECIMAL(5, 2), nullable=True)
+    meta = Column("metadata", JSON, nullable=True)
 
     project = relationship("ContentProject", back_populates="scripts")
 

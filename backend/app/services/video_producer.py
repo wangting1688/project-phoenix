@@ -21,7 +21,9 @@
 from __future__ import annotations
 
 import os
+import random
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -34,12 +36,47 @@ import logging
 
 from app.core.database import SessionLocal
 from app.models.content import ContentProject, WorkflowTask, Script, Video
+from app.models.notification import UserNotification
 
 logger = logging.getLogger(__name__)
 
 
 class ScriptDegradedError(RuntimeError):
     """AI 文案降级为写死模板。属于必须让用户知道的失败，不可静默继续。"""
+
+
+def _resolve_ffmpeg() -> str:
+    """找到本机可用的 ffmpeg：优先项目内置路径，否则用系统 PATH 里的 ffmpeg。"""
+    try:
+        from app.services import h3_pipeline as h3p
+        if h3p.FFMPEG and os.path.exists(h3p.FFMPEG):
+            return h3p.FFMPEG
+    except Exception:
+        pass
+    return shutil.which("ffmpeg") or "ffmpeg"
+
+
+def _find_cjk_font() -> Optional[str]:
+    """找一张可用的中文字体，用于封面标题叠加；找不到返回 None。"""
+    candidates = [
+        r"C:\Windows\Fonts\msyh.ttc",
+        r"C:\Windows\Fonts\msyhbd.ttc",
+        r"C:\Windows\Fonts\simhei.ttf",
+        "/www/phoenix/fonts/msyh.ttc",
+        "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",
+        "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    ]
+    for c in candidates:
+        if c and os.path.exists(c):
+            return c
+    return None
+
+
+def _escape_drawtext_path(p) -> str:
+    """drawtext 路径转义：盘符冒号需要两层反斜杠（实测单层会解析失败）。"""
+    return str(p).replace("\\", "/").replace(":", "\\\\:")
 
 
 # 段落骨架标记：【黄金开头】【故事】【价值输出】【互动】以及
@@ -92,6 +129,7 @@ class VideoProducer:
         self.user_id = user_id
         self.db = SessionLocal()
         self.storage_root = Path(__file__).resolve().parent.parent.parent
+        self._notified: set = set()
 
     def close(self):
         if self.db:
@@ -106,10 +144,18 @@ class VideoProducer:
         cls,
         project_id: int,
         user_id: int,
-        script_id: int,
-        voice_profile_id: int,
-        footage_id: int,
+        script_id: int = None,
+        voice_profile_id: int = None,
+        footage_id: int = None,
         with_lipsync: bool = True,
+        # H3 照片生成讲解画面（替换旧 TTS+lipsync+渲染链路）
+        person_image: Optional[str] = None,
+        scene: str = "lecture",
+        anchor_image: Optional[str] = None,
+        hair_hint: str = "",
+        width: Optional[int] = None,
+        height: Optional[int] = None,
+        seed: int = 400000,
     ) -> int:
         """
         创建视频生产任务（异步），返回 task_id。
@@ -151,6 +197,13 @@ class VideoProducer:
                 "voice_profile_id": voice_profile_id,
                 "footage_id": footage_id,
                 "with_lipsync": with_lipsync,
+                "person_image": person_image,
+                "scene": scene,
+                "anchor_image": anchor_image,
+                "hair_hint": hair_hint,
+                "width": width,
+                "height": height,
+                "seed": seed,
             }, ensure_ascii=False)
             db.commit()
             db.refresh(task)
@@ -211,6 +264,18 @@ class VideoProducer:
                 script = self._generate_script(task_id)
             if not script:
                 raise ValueError("脚本不存在且无法自动生成（项目缺少选题 topic 或 AI 文案生成失败）")
+
+            # ==== H3 照片生成讲解画面（新主链路，替换旧 TTS+lipsync+渲染） ====
+            if params.get("person_image"):
+                h3_result = self._run_h3(
+                    task_id,
+                    script_text=_strip_structure_markers(script.content),
+                    params=params,
+                )
+                self._save_video_result(h3_result)
+                self._update_task(task_id, "completed", 100, "生成完成")
+                logger.info("task=%s H3 生产完成", task_id)
+                return
 
             # Step 2: 先取素材 —— 本地音色克隆要用同一条素材里的人声做参考音频，
             # 所以素材必须在 TTS 之前就位（顺序与火山方案相反）
@@ -291,6 +356,157 @@ class VideoProducer:
         except Exception as e:
             logger.error("task=%s 生产失败: %s", task_id, e)
             self._update_task(task_id, "failed", 0, error=str(e))
+
+    # ------------------------------------------------------------------
+    # H3 照片生成讲解画面（ComfyUI + MiniMax H3）
+    # ------------------------------------------------------------------
+    def _resolve_storage_path(self, p: Optional[str]) -> Optional[str]:
+        """入参既可是绝对路径，也可是相对 storage_root 的路径。"""
+        if not p:
+            return None
+        pp = Path(p)
+        if pp.is_absolute():
+            return str(pp)
+        return str((self.storage_root / pp).resolve())
+
+    def _run_h3(self, task_id: int, script_text: str, params: dict) -> Dict[str, Any]:
+        """调用 H3VideoEngine 生成画面/口型已对齐的讲解视频，并产出 renderer 同构 result。"""
+        import shutil
+        import uuid as _uuid
+        from app.services.h3_video_engine import H3VideoEngine, SCENE_PRESETS
+        from app.services import h3_pipeline as h3p
+
+        # 线上服务器没有 Windows 内置 ffmpeg 路径，统一解析成可用 ffmpeg
+        if not os.path.exists(h3p.FFMPEG):
+            h3p.FFMPEG = _resolve_ffmpeg()
+
+        self._update_task(task_id, "running", 15, "准备人像与场景")
+        person = self._resolve_storage_path(params.get("person_image"))
+        if not person or not Path(person).exists():
+            raise ValueError("H3 生成需要有效的人像照片 person_image")
+        anchor_img = self._resolve_storage_path(params.get("anchor_image"))
+        scene = params.get("scene") or "lecture"
+        scene = SCENE_PRESETS.get(scene, scene)
+
+        # 从所选文案读取重点词，用于字幕高亮
+        emphasis = []
+        script_id = params.get("script_id")
+        if script_id:
+            scr = self.db.query(Script).filter(Script.id == script_id).first()
+            if scr and scr.meta:
+                emphasis = scr.meta.get("emphasis") or []
+
+        # 使用用户选中的克隆声音：把它的参考音频和逐字稿传给 H3。
+        # 声音样本找不到时宁可明确报错，也不要悄悄换回默认音色——用户上次
+        # 选「清清」却出来别的声音，根因就是这里静默降级。
+        ref_wav = None
+        ref_text = ""
+        voice_profile_id = params.get("voice_profile_id")
+        if voice_profile_id:
+            from app.models import UserVoiceProfile
+            vp = self.db.query(UserVoiceProfile).filter(
+                UserVoiceProfile.id == voice_profile_id,
+                UserVoiceProfile.user_id == self.user_id,
+                UserVoiceProfile.status == "active",
+            ).first()
+            if not vp:
+                raise ValueError("选中的克隆声音不存在或未启用，请重新选择声音")
+            if not vp.sample_path:
+                raise ValueError("选中的克隆声音缺少参考音频，请重新上传声音样本")
+            sp = self._resolve_storage_path(vp.sample_path)
+            if not sp or not Path(sp).exists():
+                raise ValueError("选中的克隆声音参考音频文件丢失，请重新上传声音样本")
+            ref_wav = str(sp)
+            ref_text = vp.reference_text or ""
+
+        engine = H3VideoEngine(self.storage_root)
+        if not engine.available():
+            raise RuntimeError("ComfyUI(8188) 未运行，无法生成 H3 画面")
+
+        self._update_task(task_id, "running", 25, "H3 生成画面与口型")
+        job = f"task{task_id}_{int(time.time())}_{_uuid.uuid4().hex[:6]}"
+        # 每次生成用随机种子，避免同一场景每次画面都一模一样
+        seed = int(params.get("seed") or 0) or random.randint(1, 2 ** 31 - 1)
+        mp4: Path = engine.generate(
+            person_image=person,
+            script_text=script_text,
+            scene=scene,
+            anchor_image=anchor_img,
+            width=params.get("width"),
+            height=params.get("height"),
+            hair_hint=params.get("hair_hint") or "",
+            seed=seed,
+            job_id=job,
+            emphasis=emphasis,
+            ref_wav=ref_wav,
+            ref_text=ref_text,
+        )
+
+        # 落到 storage/output，产出与 video_renderer 同构的 result（前端无感）
+        self._update_task(task_id, "running", 90, "保存成片")
+        out_dir = self.storage_root / "storage" / "output"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_name = f"h3_p{self.project_id}_{int(time.time())}.mp4"
+        out_path = out_dir / out_name
+        shutil.copyfile(mp4, out_path)
+
+        cover_url = None
+        cover_name = out_name.replace(".mp4", "_cover.jpg")
+        cover_path = out_dir / cover_name
+        try:
+            subprocess.run(
+                [h3p.FFMPEG, "-y", "-ss", "1", "-i", str(out_path),
+                 "-vframes", "1", "-q:v", "5", "-vf", "scale=360:-2", str(cover_path)],
+                capture_output=True, timeout=20,
+            )
+            if cover_path.exists() and cover_path.stat().st_size > 0:
+                cover_url = f"/static/output/{cover_name}"
+                # 封面叠加标题大字（尽力而为，找不到字体/失败则保留原封面）
+                font = _find_cjk_font()
+                if font:
+                    project = self.db.query(ContentProject).filter(
+                        ContentProject.id == self.project_id
+                    ).first()
+                    title = (project.topic if project and project.topic
+                             else script_text).strip()[:10]
+                    if title:
+                        title_file = out_dir / f"{cover_name}.title.txt"
+                        title_file.write_text(title, encoding="utf-8")
+                        titled = out_dir / f"titled_{cover_name}"
+                        vf = (
+                            "drawtext="
+                            f"fontfile={_escape_drawtext_path(font)}:"
+                            f"textfile={_escape_drawtext_path(title_file)}:"
+                            "fontcolor=white:fontsize=36:"
+                            "box=1:boxcolor=black@0.55:boxborderw=18:"
+                            "x=(w-text_w)/2:y=h*0.78"
+                        )
+                        subprocess.run(
+                            [h3p.FFMPEG, "-y", "-i", str(cover_path),
+                             "-vf", vf, "-q:v", "5", str(titled)],
+                            capture_output=True, timeout=20,
+                        )
+                        if titled.exists() and titled.stat().st_size > 0:
+                            shutil.move(str(titled), str(cover_path))
+                        try:
+                            title_file.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        duration = h3p.probe_duration(out_path)
+        subtitle_count = len(h3p.split_sentences(script_text))
+        return {
+            "output_path": str(out_path),
+            "output_url": f"/static/output/{out_name}",
+            "cover_url": cover_url,
+            "duration": round(duration, 1),
+            "has_audio": True,
+            "file_size": out_path.stat().st_size,
+            "scene_count": 1,
+            "subtitle_count": subtitle_count,
+        }
 
     # ------------------------------------------------------------------
     # 各步骤实现
@@ -669,6 +885,26 @@ class VideoProducer:
         if error:
             task.error_message = error
         self.db.commit()
+        # 终态通知：完成/失败只发一次，避免重复打扰
+        if status in ("completed", "failed") and (task_id, status) not in self._notified:
+            try:
+                title = "视频生成完成" if status == "completed" else "视频生成失败"
+                content = (
+                    "你的视频已生成，点击查看。"
+                    if status == "completed"
+                    else (error or "生成失败，请重新生成。")
+                )
+                self.db.add(UserNotification(
+                    user_id=self.user_id,
+                    type="task",
+                    title=title,
+                    content=content,
+                    link=f"/result?project_id={self.project_id}",
+                ))
+                self.db.commit()
+                self._notified.add((task_id, status))
+            except Exception:
+                self.db.rollback()
         if error:
             logger.error(
                 "task=%s step=%s status=%s progress=%s 失败原因=%s",

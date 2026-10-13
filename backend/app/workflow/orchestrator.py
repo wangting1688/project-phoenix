@@ -4,7 +4,6 @@ import time
 
 from app.workflow.base import BaseWorkflow
 from app.workflow.content_workflow import ContentAnalysisWorkflow
-from app.workflow.planning_workflow import PlanningWorkflow
 from app.workflow.script_workflow import ScriptWorkflow
 from app.workflow.review_workflow import ReviewWorkflow
 from app.workflow.optimization_workflow import OptimizationWorkflow
@@ -15,7 +14,6 @@ from app.core.database import SessionLocal
 class WorkflowOrchestrator:
     WORKFLOW_STEPS = [
         "analyzing",
-        "planning",
         "scripting",
         "reviewing",
         "optimizing",
@@ -24,16 +22,18 @@ class WorkflowOrchestrator:
 
     AGENT_MAP = {
         "analyzing": "Content Agent",
-        "planning": "Planning Agent",
         "scripting": "Script Agent",
         "reviewing": "Review Agent",
         "optimizing": "Operation Agent",
     }
 
-    def __init__(self, project_id: int, topic: str, user_id: int = None):
+    def __init__(self, project_id: int, topic: str, user_id: int = None,
+                 platform: str = "抖音", persona: str = ""):
         self.project_id = project_id
         self.topic = topic
         self.user_id = user_id
+        self.platform = platform or "抖音"
+        self.persona = persona or ""
         self.db = SessionLocal()
         self.states = {
             "content_result": None,
@@ -53,10 +53,7 @@ class WorkflowOrchestrator:
             if not step_result["success"]:
                 return self._build_error_result(step_result)
             self.states["content_result"] = step_result["data"]
-
-            step_result = self._run_step("planning", self._run_planning, self.states["content_result"])
-            if not step_result["success"]:
-                return self._build_error_result(step_result)
+            # 分析与策划已合并为一次调用，结果同时作为策划输入传给文案步骤
             self.states["planning_result"] = step_result["data"]
 
             step_result = self._run_step("scripting", self._run_scripting, self.states["planning_result"])
@@ -116,19 +113,17 @@ class WorkflowOrchestrator:
             raise
 
     def _run_content_analysis(self) -> Dict[str, Any]:
-        workflow = ContentAnalysisWorkflow(self.project_id, self.topic)
+        workflow = ContentAnalysisWorkflow(
+            self.project_id, self.topic,
+            platform=self.platform, persona=self.persona)
         result = workflow.execute()
         workflow.close()
         return result
 
-    def _run_planning(self, content_result: Dict[str, Any]) -> Dict[str, Any]:
-        workflow = PlanningWorkflow(self.project_id)
-        result = workflow.execute(content_result)
-        workflow.close()
-        return result
-
     def _run_scripting(self, planning_result: Dict[str, Any]) -> Dict[str, Any]:
-        workflow = ScriptWorkflow(self.project_id, self.topic)
+        workflow = ScriptWorkflow(
+            self.project_id, self.topic,
+            platform=self.platform, persona=self.persona)
         result = workflow.execute(planning_result)
         workflow.close()
         return result

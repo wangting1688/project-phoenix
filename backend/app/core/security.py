@@ -2,7 +2,9 @@ from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 import hashlib
+import hmac
 import os
+import time
 
 from app.core.config import settings
 
@@ -49,3 +51,25 @@ def decode_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+
+def sign_media_path(path: str, expires_in: int = 3600) -> str:
+    """为 storage 相对路径生成短时签名 URL，避免 JWT 出现在分享链接/日志里。"""
+    expires = int(time.time()) + expires_in
+    msg = f"{path}:{expires}".encode("utf-8")
+    sig = hmac.new(settings.SECRET_KEY.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    return f"/static/{path}?expires={expires}&sig={sig}"
+
+
+def verify_media_signature(path: str, expires, sig: str) -> bool:
+    try:
+        expires_int = int(expires)
+    except (TypeError, ValueError):
+        return False
+    if expires_int < int(time.time()):
+        return False
+    if not sig:
+        return False
+    msg = f"{path}:{expires_int}".encode("utf-8")
+    expected = hmac.new(settings.SECRET_KEY.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, sig.lower())

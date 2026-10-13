@@ -81,7 +81,12 @@ def create_project(
 
     def run_workflow_background():
         try:
-            orchestrator = WorkflowOrchestrator(project.id, project_in.topic)
+            orchestrator = WorkflowOrchestrator(
+                project.id,
+                project_in.topic,
+                platform=project_in.platform,
+                persona=project_in.persona,
+            )
             orchestrator.execute()
         except Exception as e:
             print(f"Workflow error: {e}")
@@ -294,3 +299,99 @@ def update_script_content(
     db.commit()
     db.refresh(script)
     return ApiResponse(data=ScriptResponse.model_validate(script))
+
+
+@router.post("/scripts/{script_id}/mark-hot", response_model=ApiResponse[ScriptResponse])
+def mark_script_hot(
+    script_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """把一条文案标记为爆款，后续生成会参考它的风格/结构。"""
+    from app.models import Script, ContentProject
+
+    script = db.query(Script).filter(Script.id == script_id).first()
+    if not script:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    query = db.query(ContentProject).filter(
+        ContentProject.id == script.project_id,
+        ContentProject.user_id == current_user.id,
+    )
+    if current_user.tenant_id:
+        query = query.filter(ContentProject.tenant_id == current_user.tenant_id)
+    if not query.first():
+        raise HTTPException(status_code=403, detail="无权限")
+
+    md = dict(script.meta or {})
+    md["is_hot"] = True
+    script.meta = md
+    db.commit()
+    db.refresh(script)
+    return ApiResponse(data=ScriptResponse.model_validate(script))
+
+
+@router.post("/projects/{project_id}/scripts/{script_id}/re-review", response_model=ApiResponse[dict])
+def re_review_script(
+    project_id: int,
+    script_id: int,
+    payload: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """用户修改文案后重新提交合规审核；通过则恢复任务为已完成，允许继续生成视频。"""
+    from app.models import Script, ContentProject, Review, WorkflowTask
+    from app.experts.ai_expert import AIExpertService
+
+    script = db.query(Script).filter(Script.id == script_id).first()
+    if not script or script.project_id != project_id:
+        raise HTTPException(status_code=404, detail="文案不存在")
+    query = db.query(ContentProject).filter(
+        ContentProject.id == project_id,
+        ContentProject.user_id == current_user.id,
+        ContentProject.deleted_at.is_(None),
+    )
+    if current_user.tenant_id:
+        query = query.filter(ContentProject.tenant_id == current_user.tenant_id)
+    project = query.first()
+    if not project:
+        raise HTTPException(status_code=403, detail="无权限")
+
+    new_content = payload.get("content")
+    if isinstance(new_content, str) and new_content.strip():
+        script.content = new_content.strip()
+
+    ai_result = AIExpertService().compliance_expert(script.content)
+    problems = ai_result.get("problems") or []
+
+    review = db.query(Review).filter(Review.project_id == project_id).first()
+    if review:
+        review.risk_score = ai_result.get("risk_score")
+        review.result = "pass" if ai_result.get("pass") else "fail"
+    else:
+        review = Review(
+            project_id=project_id,
+            original_score=script.score,
+            risk_score=ai_result.get("risk_score"),
+            result="pass" if ai_result.get("pass") else "fail",
+        )
+        db.add(review)
+    db.commit()
+
+    if not ai_result.get("pass"):
+        msg = "合规审核未通过: " + "; ".join(str(x) for x in problems) if problems \
+            else "合规审核未通过"
+        raise HTTPException(status_code=400, detail=msg)
+
+    task = db.query(WorkflowTask).filter(
+        WorkflowTask.project_id == project_id,
+        WorkflowTask.task_type == "full_creation",
+    ).first()
+    if task:
+        task.status = "completed"
+        task.progress = 100
+        task.error_message = None
+    project.status = "completed"
+    project.workflow_status = "completed"
+    db.commit()
+
+    return ApiResponse(data={"pass": True, "problems": []})

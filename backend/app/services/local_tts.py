@@ -86,6 +86,11 @@ TTS_TARGET_CPS = float(os.environ.get("TTS_TARGET_CPS", "4.4"))
 # 单次变速上限，超过说明参考音频可能有问题
 TTS_MAX_TEMPO = float(os.environ.get("TTS_MAX_TEMPO", "1.5"))
 
+# 合成片段的最小净字数。低于它的片段会被并到相邻段：
+# 一是回读门禁在极短文本上统计样本太小容易误杀，二是听感上像结巴。
+# 与 verify_intelligibility 里的短句豁免阈值保持同一个数量级。
+PREF_MIN_CHARS = int(os.environ.get("TTS_PREF_MIN_CHARS", "8"))
+
 
 # ---------------------------------------------------------------------------
 # 文本切分
@@ -112,6 +117,14 @@ def split_sentences(text: str, max_len: int = 60, min_len: int = 24):
             buf = p
     if buf:
         merged.append(buf)
+
+    # 尾句过短时回并到前一句：本地合成是按段生成的，一段只剩 3~5 个字时，
+    # 回读门禁的相似度统计样本太小（3 个字错 1 个就掉到 33%），容易被误杀。
+    # 仅在不超上限时合并，避免把两段拼成模型难处理的超长句。
+    if (len(merged) >= 2 and _char_count(merged[-1]) < PREF_MIN_CHARS
+            and len(merged[-2]) + len(merged[-1]) <= max_len):
+        merged[-2] = merged[-2] + merged[-1]
+        merged.pop()
 
     out = []
     for p in merged:
@@ -194,7 +207,7 @@ def _to_simplified(text: str) -> str:
 
 
 def verify_intelligibility(audio_path, expect_text: str,
-                           threshold: float = 0.55) -> Tuple[bool, float, str]:
+                           threshold: Optional[float] = None) -> Tuple[bool, float, str]:
     """用 ASR 回读合成音频，判断内容是否可辨识。
 
     这是可自动化的质量门禁：机器都听不懂，人一定也听不懂。
@@ -202,9 +215,15 @@ def verify_intelligibility(audio_path, expect_text: str,
     此时模型会按错误的音素映射发音，输出整段乱码——而任务状态仍是成功，
     乱码会一路进到成片。所以在返回前必须验一次。
 
-    阈值 0.55 偏宽松：中文同音字很多，ASR 本身也会写错字
-    （实测正常合成约 77%~88%，乱码约 10% 以下），足以区分两者。
+    阈值默认 0.50（可用 TTS_INTELLIGIBILITY_THRESHOLD 覆盖）：
+    中文同音字多，ASR 本身也会写错字（实测正常 77%~88%，乱码约 10% 以下）。
+    个别句子在 50% 上下属于勉强可辨识，放行；明显乱码仍会被拦。
+
+    净字数 < 8 的片段走另一条判据（字符覆盖率 ≥ 50%），原因见下方注释：
+    样本太小，SequenceMatcher 会稳定误杀正常音频。
     """
+    if threshold is None:
+        threshold = float(os.environ.get("TTS_INTELLIGIBILITY_THRESHOLD", "0.50"))
     import difflib
     try:
         got = transcribe(audio_path)
@@ -223,6 +242,27 @@ def verify_intelligibility(audio_path, expect_text: str,
     want, real = strip(expect_text), strip(got)
     if not want or not real:
         return False, 0.0, got
+
+    n = len(want)
+    # 极短文本不能用 SequenceMatcher 的相似度：分母太小，1 个字不一致
+    # 相似度就从 100% 掉到 30% 上下。实测线上任务 93 的第 9 句「那咋办？」
+    # 净 3 字，合成音频人耳完全听得清，回读相似度却只有 33.3%，被门禁误杀，
+    # 连带整条视频失败（而这类短句在口语文案里很常见）。
+    # 对净字数 < 8 的片段改用「字符覆盖率」：期望文本里的字有多少出现在
+    # 回读结果中，≥ 50% 即视为可辨识；真乱码（音文错配）是一个字都覆盖不上。
+    if n < 8:
+        from collections import Counter
+        cw, cr = Counter(want), Counter(real)
+        hit = sum(min(c, cr[ch]) for ch, c in cw.items())
+        ratio = hit / n
+        ok = ratio >= 0.50
+        print(f"[tts] 回读校验(短句 n={n}) {'通过' if ok else '未通过'}: "
+              f"字符覆盖 {hit}/{n} = {ratio*100:.1f}% (阈值 50%)")
+        if not ok:
+            print(f"[tts]   期望: {want}")
+            print(f"[tts]   回读: {real}")
+        return ok, ratio, got
+
     ratio = difflib.SequenceMatcher(None, want, real).ratio()
     ok = ratio >= threshold
     print(f"[tts] 回读校验 {'通过' if ok else '未通过'}: 相似度 {ratio*100:.1f}% "
@@ -477,7 +517,7 @@ def shutdown_serve() -> bool:
 
 
 def _synthesize_via_serve(text, ref_wav, ref_text, out_path,
-                          target_cps) -> Optional[Path]:
+                          target_cps, variant: int = 0) -> Optional[Path]:
     """走常驻子进程合成。任何异常都返回 None，由调用方回退。"""
     global _serve_proc, _serve_lock
     import json
@@ -496,6 +536,7 @@ def _synthesize_via_serve(text, ref_wav, ref_text, out_path,
         "out": str(Path(out_path).resolve()),
         "target_cps": target_cps if target_cps is not None else TTS_TARGET_CPS,
         "max_tempo": TTS_MAX_TEMPO,
+        "variant": int(variant),
     }, ensure_ascii=False)
 
     # 串行化：共用一个 stdin/stdout 管道，并发写会让响应错配到别的请求上
@@ -522,8 +563,13 @@ def _synthesize_via_serve(text, ref_wav, ref_text, out_path,
 
 
 def synthesize_local(text: str, ref_wav, ref_text: str, out_path,
-                     target_cps: Optional[float] = None) -> Optional[Path]:
-    """本机合成入口：转交给 CosyVoice2 自己的解释器执行。"""
+                     target_cps: Optional[float] = None,
+                     variant: int = 0) -> Optional[Path]:
+    """本机合成入口：转交给 CosyVoice2 自己的解释器执行。
+
+    variant 用于重试时换随机种子：同一个输入重复合成是确定性的，原样重发
+    等于白等，所以调用方每次重试都要换一个 variant（0 = 首次）。
+    """
     ref_wav = Path(ref_wav)
     out_path = Path(out_path)
     if not ref_wav.exists():
@@ -534,6 +580,16 @@ def synthesize_local(text: str, ref_wav, ref_text: str, out_path,
         # 上游若拿不到文稿，应把音频交给 worker 侧 ASR，而不是传空串。
         print("[tts] 缺少参考音频逐字稿(ref_text)，拒绝合成")
         return None
+
+    # ⚠️ 逐字稿必须先归一为简体，且必须在本进程做：
+    # CosyVoice2 的中文前端按简体字表做文本归一/音素映射，繁体字对不上，
+    # prompt 文本与 prompt 音频 token 错位，模型就从错位处续写——实测同一段
+    # 16.32s 参考音频，繁体旧稿合成出来前面多 20 个字的垃圾（「心情短幾趟,
+    # 你看明把一虎一骨,財夫肉化」），转成简体后回到 87.2% 干净。
+    # 归一只在**装了 zhconv 的解释器**里真正生效：CosyVoice 自己的
+    # Python 3.11 环境没有 zhconv（实测 ModuleNotFoundError），所以放在
+    # _synthesize_inproc 里是空转——那里只能算兜底。
+    ref_text = _to_simplified(ref_text)
     if not Path(COSY_PY).exists():
         print(f"[tts] CosyVoice 解释器不存在: {COSY_PY}")
         return None
@@ -542,7 +598,7 @@ def synthesize_local(text: str, ref_wav, ref_text: str, out_path,
 
     # 先走常驻进程：省掉每条配音 8 秒的模型加载。失败则落回一次性子进程，
     # 保证这个优化本身不会成为配音链路的新故障点。
-    res = _synthesize_via_serve(text, ref_wav, ref_text, out_path, target_cps)
+    res = _synthesize_via_serve(text, ref_wav, ref_text, out_path, target_cps, variant)
     if res is not None:
         return res
 
@@ -551,7 +607,8 @@ def synthesize_local(text: str, ref_wav, ref_text: str, out_path,
            "--ref-wav", str(ref_wav.resolve()),
            "--out", str(out_path.resolve()),
            "--target-cps", str(target_cps if target_cps is not None else TTS_TARGET_CPS),
-           "--max-tempo", str(TTS_MAX_TEMPO)]
+           "--max-tempo", str(TTS_MAX_TEMPO),
+           "--variant", str(int(variant))]
     env = os.environ.copy()
     env["PATH"] = str(Path(FFMPEG).parent) + os.pathsep + env.get("PATH", "")
     env["COSY_DIR"] = COSY_DIR
@@ -581,7 +638,8 @@ def synthesize_local(text: str, ref_wav, ref_text: str, out_path,
 
 
 def _synthesize_inproc(text: str, ref_wav, ref_text: str, out_path,
-                       target_cps: Optional[float] = None) -> Optional[Path]:
+                       target_cps: Optional[float] = None,
+                       variant: int = 0) -> Optional[Path]:
     """在 CosyVoice2 自己的解释器内执行（由 cosyvoice_runner.py 调用）。"""
     import torch
     import torchaudio
@@ -594,6 +652,33 @@ def _synthesize_inproc(text: str, ref_wav, ref_text: str, out_path,
         # 没有逐字稿时宁可失败也不瞎填：错配会输出乱码
         print("[tts] 缺少参考音频逐字稿(ref_text)，拒绝合成")
         return None
+
+    # ⚠️ 逐字稿必须归一为简体再喂给模型。实测（2026-10-13，同一段 16.32s 参考音频
+    # 只换逐字稿）：
+    #   库内简体稿 -> 回读相似度 94.7%，干净
+    #   同内容的繁体稿 -> 合成的音频前面多出 20 个字的垃圾（如「心情短幾趟,
+    #     你看明把一虎一骨,財夫肉化」）再才是正文
+    #  该繁体稿用 zhconv 转成简体后 -> 又回到 87.2% 干净
+    # 原因是 CosyVoice2 的中文前端按简体字表做文本归一/音素映射，繁体字对不上，
+    # prompt 文本与 prompt 音频的 token 对不齐，LLM 就从错位处续写。
+    # 而 whisper 对中文默认输出繁体——所以"没给逐字稿就自己转写"这条兜底路径
+    # 必然踩坑。
+    # 注意：本函数跑在 CosyVoice 自己的解释器里，那里**没有 zhconv**
+    # （实测 ModuleNotFoundError），所以这里只是兜底；真正生效的是
+    # 调用方进程（worker / 本项目 venv）里的那一层归一。
+    ref_text = _to_simplified(ref_text)
+
+    # 重试换策略：CosyVoice2 的 flow matching 从一个随机噪声起步，同输入同
+    # 种子必然产出同一条音频。调用方每次重试递增 variant，这里据此换种子，
+    # 才能拿到一条"真正不一样"的音频去重新过门禁。
+    if variant:
+        seed = 1234 + int(variant) * 7919
+        torch.manual_seed(seed)
+        try:
+            torch.cuda.manual_seed_all(seed)
+        except Exception:
+            pass
+        print(f"[tts] 重试换种子 variant={variant} seed={seed}")
 
     sents = split_sentences(text)
     if not sents:
@@ -727,21 +812,33 @@ def synthesize_remote(text: str, ref_wav, ref_text: str, out_path) -> Optional[P
 
     req = urllib.request.Request(base + "/tts", data=body, method="POST")
     req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
-    try:
+    # CosyVoice 回读相似度门控有随机性（同一请求可能这次50%、下次通过），
+    # HTTP 500/非音频时重试，避免一次偶发失败直接走到 501。
+    import time as _time
+    last_err = ""
+    for attempt in range(1, 4):
         try:
-            with urllib.request.urlopen(req, timeout=TTS_HTTP_TIMEOUT) as r:
-                data = r.read()
-                ctype = r.headers.get("Content-Type", "")
-        except urllib.error.HTTPError as e:
-            print(f"[tts] 远程 HTTP {e.code}: {e.read()[:300]}")
-            return None
-        if not _looks_like_audio(data, ctype):
-            print(f"[tts] 远程未返回音频(ctype={ctype!r}): {data[:200]}")
-            return None
-        out_path = Path(out_path)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(data)
-        return out_path
-    except Exception as e:
-        print(f"[tts] 远程合成失败: {e}")
-        return None
+            try:
+                with urllib.request.urlopen(req, timeout=TTS_HTTP_TIMEOUT) as r:
+                    data = r.read()
+                    ctype = r.headers.get("Content-Type", "")
+            except urllib.error.HTTPError as e:
+                last_err = f"HTTP {e.code}: {e.read()[:200]}"
+                print(f"[tts] 远程 {last_err}，第{attempt}次重试...")
+                _time.sleep(2)
+                continue
+            if not _looks_like_audio(data, ctype):
+                last_err = f"非音频(ctype={ctype!r}): {data[:160]}"
+                print(f"[tts] 远程未返回音频，{last_err}，第{attempt}次重试...")
+                _time.sleep(2)
+                continue
+            out_path = Path(out_path)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(data)
+            return out_path
+        except Exception as e:
+            last_err = str(e)
+            print(f"[tts] 远程合成异常: {e}，第{attempt}次重试...")
+            _time.sleep(2)
+    print(f"[tts] 远程合成重试3次仍失败: {last_err}")
+    return None

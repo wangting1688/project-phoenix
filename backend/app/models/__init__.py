@@ -24,6 +24,7 @@ from app.models.intelligence import (
 )
 from app.models.prompt import PromptTemplate
 from app.models.ai_task import AITask
+from app.models.notification import UserNotification
 from app.models.agent import Agent
 from app.models.tracking import CreatorAction, ContentMetrics
 from app.models.opportunity import ContentOpportunity

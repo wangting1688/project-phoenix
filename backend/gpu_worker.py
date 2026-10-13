@@ -7,10 +7,11 @@
 - 用 .venv_lipsync 运行（含 torch+cu128 / cv2 / librosa / ffmpeg）
 启动： .venv_lipsync/Scripts/python.exe gpu_worker.py
 """
-import os, sys, io, tempfile, importlib.util, asyncio, traceback
+import os, sys, io, json, tempfile, importlib.util, asyncio, traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from fastapi import FastAPI, Form, UploadFile, File
+from typing import Optional
 from fastapi.responses import JSONResponse, Response
 
 # 日志里全是中文诊断信息。stdout 被重定向到文件时，Windows 会退回 ANSI 编码
@@ -195,7 +196,7 @@ def _ollama_ready() -> bool:
         with op.open(url.rstrip("/") + "/api/tags", timeout=3) as r:
             import json as _json
             data = _json.loads(r.read().decode("utf-8", "replace"))
-        want = os.environ.get("OLLAMA_MODEL", "gemma4:26b").split(":")[0]
+        want = os.environ.get("OLLAMA_MODEL", "qwen3.8:27b-q4_K_M").split(":")[0]
         return any(want in (m.get("name") or "") for m in data.get("models", []))
     except Exception:
         return False
@@ -365,11 +366,15 @@ async def sync(face: UploadFile = File(...), audio: UploadFile = File(...)):
 
 @app.post("/tts")
 async def tts(text: str = Form(...), ref_text: str = Form(""),
+              variant: int = Form(0),
               ref_wav: UploadFile = File(...)):
     """CosyVoice2 zero-shot 克隆合成，返回 mp3。
 
     ref_text 为空时用 whisper 转写参考音频——绝不猜测文稿内容，
     音文错配会让模型输出无法辨识的声音。
+
+    variant 为重试轮次：调用方每次重试递增，本端点据此换随机种子。
+    同一输入重复合成是确定性的，不换种子重试等于白等。
     """
     if _tts is None:
         return JSONResponse({"error": "local_tts unavailable"}, status_code=503)
@@ -385,7 +390,7 @@ async def tts(text: str = Form(...), ref_text: str = Form(""),
         import hashlib
         print(
             f"[tts] req ref_wav={len(raw)}B md5={hashlib.md5(raw).hexdigest()[:12]} "
-            f"text={text[:24]!r} ref_text={rt[:24]!r}"
+            f"variant={variant} text={text[:24]!r} ref_text={rt[:24]!r}"
         )
 
         ref_md5 = hashlib.md5(raw).hexdigest()
@@ -409,18 +414,27 @@ async def tts(text: str = Form(...), ref_text: str = Form(""),
                         if not rt.strip():
                             err["detail"] = "参考音频转写为空，无法克隆"
                             return None
+                        # whisper 对中文默认输出繁体，而繁体旧稿会让克隆音频带上
+                        # 垃圾前缀（实测见 local_tts._synthesize_inproc 注释）。
+                        # 缓存前先归一为简体，缓存与后续合成用的是同一份文本。
+                        rt = _tts._to_simplified(rt)
                         _REF_TEXT_CACHE[ref_md5] = rt
                         # 只留最近若干条：worker 常驻，无界字典会一直长
                         if len(_REF_TEXT_CACHE) > 32:
                             _REF_TEXT_CACHE.pop(next(iter(_REF_TEXT_CACHE)))
-                res = _tts.synthesize_local(text, ref, rt, out)
+                res = _tts.synthesize_local(text, ref, rt, out, variant=variant)
                 if not res:
                     return None
                 # 质量门禁：回读不可辨识就不返回，避免乱码进到成片
                 ok, ratio, got = _tts.verify_intelligibility(res, text)
                 if not ok:
-                    err["detail"] = (f"合成音频回读不可辨识(相似度 {ratio*100:.1f}%)，"
-                                     f"多为参考音频与逐字稿不匹配")
+                    # detail 会经调用方流出到任务失败信息里，写得让人能看懂；
+                    # 相似度等技术细节留在日志中。
+                    err["detail"] = (
+                        f"配音没有通过清晰度校验（这句 {len(text)} 个字，"
+                        f"回读相似度 {ratio*100:.0f}%）"
+                    )
+                    print(f"[tts] 门禁未过 ratio={ratio:.3f} want={text!r} got={got!r}")
                     return None
                 return res
             except Exception as e:
@@ -435,6 +449,46 @@ async def tts(text: str = Form(...), ref_text: str = Form(""),
             return Response(content=data, media_type="audio/mpeg",
                             headers={"Content-Disposition": "attachment; filename=tts.mp3"})
     return JSONResponse({"error": "tts failed", "detail": err.get("detail", "")},
+                        status_code=500)
+
+
+@app.post("/asr")
+async def asr(video: UploadFile = File(...)):
+    """视频/音频转写文案（whisper），供爆款逆向工程自动提取口播稿。"""
+    if _tts is None:
+        return JSONResponse({"error": "local_tts unavailable"}, status_code=503)
+    with tempfile.TemporaryDirectory() as td:
+        src = Path(td) / "src.bin"
+        raw = await video.read()
+        src.write_bytes(raw)
+        err = {}
+
+        def _run():
+            try:
+                audio = Path(td) / "audio.wav"
+                import subprocess as _sp
+                ff = os.environ.get("FFMPEG_BIN", "ffmpeg")
+                _sp.run(
+                    [ff, "-y", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", str(audio)],
+                    capture_output=True, text=True,
+                )
+                if not audio.exists() or audio.stat().st_size == 0:
+                    audio = src
+                text = _tts.transcribe(audio)
+                if not text.strip():
+                    err["detail"] = "转写为空"
+                    return None
+                return text
+            except Exception as e:
+                err["detail"] = f"{type(e).__name__}: {e}"
+                traceback.print_exc()
+                return None
+
+        loop = asyncio.get_running_loop()
+        text = await loop.run_in_executor(_tts_pool, _run)
+        if text:
+            return JSONResponse({"text": text})
+    return JSONResponse({"error": "asr failed", "detail": err.get("detail", "")},
                         status_code=500)
 
 
@@ -514,6 +568,138 @@ async def _warmup():
             print(f"[warmup] CosyVoice2 自检异常: {e}")
 
     asyncio.get_running_loop().run_in_executor(_tts_pool, _go)
+
+
+# ===================== H3 图生视频（远程派发端点） =====================
+# 服务器(Phoenix 后端)经反向隧道把"人像素片 + 文案 + 场景"POST 到这里，
+# 本机(有 GPU/ComfyUI/CosyVoice)执行完整 H3 流水线并回传 mp4。
+_h3_pool = ThreadPoolExecutor(max_workers=1)
+_h3_engine = None
+
+
+def _get_h3():
+    """惰性加载 H3 引擎（import 轻，真正重的 ComfyUI 调用走 HTTP）。"""
+    global _h3_engine
+    if _h3_engine is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "h3_video_engine", BACKEND / "app" / "services" / "h3_video_engine.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _h3_engine = mod.H3VideoEngine(BACKEND / "storage")
+    return _h3_engine
+
+
+@app.get("/h3/health")
+def h3_health():
+    import requests as _rq
+    comfy = False
+    try:
+        comfy = _rq.get("http://127.0.0.1:8188/system_stats", timeout=5).status_code == 200
+    except Exception:
+        pass
+    return {"h3": True, "comfyui": comfy, "gpu_free_mib": _free_gpu_for_lipsync()}
+
+
+@app.post("/h3/generate")
+async def h3_generate(
+    person: UploadFile = File(...),
+    text: str = Form(...),
+    scene: str = Form("lecture"),
+    anchor: Optional[UploadFile] = File(None),
+    hair_hint: str = Form(""),
+    width: int = Form(0),
+    height: int = Form(0),
+    seed: int = Form(400000),
+    emphasis: str = Form(""),
+    ref_text: str = Form(""),
+    ref_wav: Optional[UploadFile] = File(None),
+):
+    """照片+文案+场景 -> H3 成片 mp4。长任务，线上调用需放宽超时。"""
+    import importlib.util
+
+    with tempfile.TemporaryDirectory() as td:
+        tdp = Path(td)
+        # 按上传扩展名落盘
+        ext = Path(person.filename or "p.png").suffix.lower() or ".png"
+        if ext not in (".png", ".jpg", ".jpeg", ".webp"):
+            ext = ".png"
+        person_path = tdp / f"person{ext}"
+        person_path.write_bytes(await person.read())
+
+        anchor_path = None
+        if anchor is not None:
+            aext = Path(anchor.filename or "a.jpg").suffix.lower() or ".jpg"
+            anchor_path = tdp / f"anchor{aext}"
+            anchor_path.write_bytes(await anchor.read())
+
+        ref_path = None
+        if ref_wav is not None:
+            rext = Path(ref_wav.filename or "ref.wav").suffix.lower() or ".wav"
+            ref_path = tdp / f"ref{rext}"
+            ref_path.write_bytes(await ref_wav.read())
+
+        # 场景预设名 -> 英文描述
+        try:
+            specm = importlib.util.spec_from_file_location(
+                "h3_video_engine_m", BACKEND / "app" / "services" / "h3_video_engine.py")
+            em = importlib.util.module_from_spec(specm); specm.loader.exec_module(em)
+            scene_desc = em.SCENE_PRESETS.get(scene, scene)
+        except Exception:
+            scene_desc = scene
+
+        loop = asyncio.get_running_loop()
+        err = {}
+
+        def _run():
+            try:
+                # 显存快见底(0.5G)时，只释放本 worker 里的小模型(TTS/人脸等)，
+                # 不释放 ComfyUI 的大模型，避免下次加载过慢。
+                free = _gpu_free_mib()
+                if free is not None and free < 512:
+                    print(f"[h3] 显存偏低 free={free}MiB，释放小模型后重试")
+                    _free_gpu_for_lipsync()
+                    free = _gpu_free_mib()
+                    if free is not None and free < 512:
+                        err["detail"] = (
+                            f"显存不足：释放小模型后仍只有 {free}MiB，请稍后重试"
+                        )
+                        return None
+                eng = _get_h3()
+                emphasis_list = []
+                if emphasis:
+                    try:
+                        parsed = json.loads(emphasis)
+                        if isinstance(parsed, list):
+                            emphasis_list = [str(x) for x in parsed[:20]]
+                    except Exception:
+                        pass
+                return str(eng.generate(
+                    person_image=str(person_path),
+                    script_text=text,
+                    scene=scene_desc,
+                    anchor_image=str(anchor_path) if anchor_path else None,
+                    width=(width or None),
+                    height=(height or None),
+                    hair_hint=hair_hint or "",
+                    seed=seed,
+                    emphasis=emphasis_list,
+                    ref_wav=str(ref_path) if ref_path else None,
+                    ref_text=ref_text,
+                ))
+            except Exception as e:
+                err["detail"] = f"{type(e).__name__}: {e}"
+                traceback.print_exc()
+                return None
+
+        out_str = await loop.run_in_executor(_h3_pool, _run)
+        if out_str and Path(out_str).exists() and Path(out_str).stat().st_size > 0:
+            data = Path(out_str).read_bytes()
+            return Response(content=data, media_type="video/mp4",
+                            headers={"Content-Disposition": "attachment; filename=h3.mp4"})
+        return JSONResponse(
+            {"error": "h3 generation failed", "detail": err.get("detail", "unknown")},
+            status_code=500)
 
 
 if __name__ == "__main__":

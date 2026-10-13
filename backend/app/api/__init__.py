@@ -32,6 +32,7 @@ from app.api.growth_causal_graph import router as growth_causal_router
 from app.api.ingest import router as ingest_router
 from app.api.tenant import router as tenant_router
 from app.api.monitoring import router as monitoring_router
+from app.api.notifications import router as notifications_router
 
 api_router = APIRouter(prefix="/api/v1")
 
@@ -68,3 +69,4 @@ if settings.ENABLE_GROWTH_APIS:
 api_router.include_router(ingest_router)
 api_router.include_router(tenant_router)
 api_router.include_router(monitoring_router)
+api_router.include_router(notifications_router)

@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Request, HTTPException, status
+from fastapi import Depends, FastAPI, Request, HTTPException, status
 from typing import Optional, Tuple
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -7,7 +7,8 @@ from pathlib import Path
 
 from app.core.config import settings
 from app.api import api_router
-from app.core.security import decode_token
+from app.core.security import decode_token, sign_media_path, verify_media_signature
+from app.api.deps import get_current_user
 
 _DEFAULT_SECRET_KEY = "phoenix-secret-key-change-in-production"
 if not settings.DEBUG and settings.SECRET_KEY == _DEFAULT_SECRET_KEY:
@@ -112,7 +113,8 @@ def _check_resource_ownership(
         from app.core.config import settings
         return settings.DEBUG
 
-    if category in ("footage", "voice_demos", "voice_samples"):
+    if category in ("footage", "voice_demos", "voice_samples",
+                    "anchor_portraits", "anchor_scenes"):
         # 第二段是 user_id
         owner_id_str = parts[1]
         try:
@@ -147,11 +149,23 @@ def _check_output_ownership(
     if role == "super_admin":
         return True
 
-    # 从文件名提取 project_id
+    # 从文件名提取 project_id。
+    # 兼容两种成片命名：旧渲染 render_<pid>_*.mp4；
+    # H3 图生视频 h3_p<pid>_<ts>.mp4（video_producer._run_h3 产出）。
     import re as _re
-    m = _re.match(r"render_(\d+)_", filename)
+    m = _re.match(r"render_(\d+)_", filename) or _re.match(r"h3_p(\d+)_", filename)
     if not m:
-        return False
+        # 兜底：直接按 Video.url 反查归属，避免命名约定变化再次 403
+        from app.models.content import Video as _V, ContentProject as _CP
+        v = db.query(_V).filter(_V.url == f"/static/output/{filename}").first()
+        if not v:
+            return False
+        proj = db.query(_CP).filter(_CP.id == v.project_id).first()
+        if not proj:
+            return False
+        if proj.user_id == user_id:
+            return True
+        return bool(tenant_id and proj.tenant_id == tenant_id)
     project_id = int(m.group(1))
 
     from app.models.content import ContentProject, Video
@@ -175,19 +189,27 @@ def _check_output_ownership(
 
 @app.get("/static/{file_path:path}", include_in_schema=False)
 async def serve_static(file_path: str, request: Request):
-    # 1. 提取并校验 token
-    token = _extract_token(request)
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Unauthorized",
-        )
-    user_id, tenant_id, role = _get_user_from_token(token)
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-        )
+    # 1. 优先用短时签名 URL（media/sign 下发，签名里绑定 path+过期时间）
+    expires = request.query_params.get("expires")
+    sig = request.query_params.get("sig")
+    signed_ok = bool(expires and sig) and verify_media_signature(file_path, expires, sig)
+    if not signed_ok:
+        # 兼容旧链接：仍允许 Bearer / query token 访问
+        token = _extract_token(request)
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unauthorized",
+            )
+        user_id, tenant_id, role = _get_user_from_token(token)
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token",
+            )
+    else:
+        # 签名由鉴权后的 media/sign 接口签发，这里不再重复校验归属
+        user_id, tenant_id, role = None, None, None
 
     # 2. 路径穿越防护
     # 用 Path 关系判断而不是字符串前缀拼 "/"：后者在 Windows 上恒为 False
@@ -203,12 +225,58 @@ async def serve_static(file_path: str, request: Request):
     if not full_path.is_file():
         raise HTTPException(status_code=404, detail="Not found")
 
-    # 3. 目录级归属校验
-    if not _check_resource_ownership(file_path, user_id, tenant_id, role):
-        raise HTTPException(status_code=403, detail="Forbidden")
+    # 3. 目录级归属校验（签名 URL 已由签发接口校验过归属）
+    if not signed_ok:
+        if not _check_resource_ownership(file_path, user_id, tenant_id, role):
+            raise HTTPException(status_code=403, detail="Forbidden")
 
     # 4. output 目录需要 DB 级 project 归属校验
     parts = file_path.split("/", 1)
+    if parts[0] == "output" and not signed_ok:
+        from app.core.database import SessionLocal
+        db = SessionLocal()
+        try:
+            filename = parts[1] if len(parts) > 1 else ""
+            if not _check_output_ownership(
+                filename, user_id, tenant_id, role, db
+            ):
+                raise HTTPException(status_code=403, detail="Forbidden")
+        finally:
+            db.close()
+
+    return FileResponse(
+        full_path,
+        headers={"Cache-Control": "private, max-age=3600"} if signed_ok else None,
+    )
+
+
+@app.get("/api/v1/media/sign", include_in_schema=False)
+def sign_media(
+    path: str,
+    current_user = Depends(get_current_user),
+):
+    """为当前用户可访问的 storage 文件签发短时签名 URL。"""
+    if not path:
+        raise HTTPException(status_code=400, detail="path 不能为空")
+
+    full_path = (STORAGE_DIR / path).resolve()
+    try:
+        inside = full_path.is_relative_to(STORAGE_DIR)
+    except AttributeError:
+        inside = str(full_path).startswith(str(STORAGE_DIR) + os.sep)
+    if not inside or full_path == STORAGE_DIR:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+
+    user_id = current_user.id
+    tenant_id = getattr(current_user, "tenant_id", None)
+    role = getattr(current_user, "role", None)
+
+    if not _check_resource_ownership(path, user_id, tenant_id, role):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    parts = path.split("/", 1)
     if parts[0] == "output":
         from app.core.database import SessionLocal
         db = SessionLocal()
@@ -221,7 +289,7 @@ async def serve_static(file_path: str, request: Request):
         finally:
             db.close()
 
-    return FileResponse(full_path)
+    return {"url": sign_media_path(path)}
 
 
 @app.on_event("startup")
@@ -229,6 +297,7 @@ def cleanup_stuck_tasks():
     from app.core.database import SessionLocal
     from app.models.content import WorkflowTask, ContentProject
     from app.models.ai_task import AITask
+    from app.models.notification import UserNotification
 
     db = SessionLocal()
     try:
@@ -250,6 +319,17 @@ def cleanup_stuck_tasks():
                 task.error_message = f"服务重启导致任务中断{stage}，请重新创建"
                 print(f"[startup] 中断任务 id={task.id} project={task.project_id} "
                       f"progress={task.progress or 0}%")
+                project = db.query(ContentProject).filter(
+                    ContentProject.id == task.project_id
+                ).first()
+                if project and project.user_id:
+                    db.add(UserNotification(
+                        user_id=project.user_id,
+                        type="task",
+                        title="任务因服务重启中断",
+                        content=f"任务 {task.id} 因服务重启中断（进度 {task.progress or 0}%），请重新生成。",
+                        link=f"/result?project_id={task.project_id}",
+                    ))
             if project_ids:
                 db.query(ContentProject).filter(
                     ContentProject.id.in_(project_ids),

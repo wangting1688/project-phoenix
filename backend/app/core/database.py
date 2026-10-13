@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine, event
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from app.core.config import settings
 
@@ -10,6 +11,13 @@ engine_kwargs = {"echo": settings.DEBUG}
 
 if db_url.startswith("sqlite"):
     connect_args["check_same_thread"] = False
+    # SQLite 是本地文件，建连接只是拿一个文件句柄，池化收益极低；
+    # 而默认 QueuePool(size=5, max_overflow=10) 只给 15 个并发连接。
+    # 作品页一次要拉几十张封面/视频，每个 /media/sign 都要开一个 session，
+    # 瞬间打满连接池 → 其余请求排队 30s 后抛 QueuePool TimeoutError
+    # → 499/500 → 前端 Promise.all 全盘失败 → 整页封面空白、点了没反应。
+    # 改用 NullPool：连接随用随开随关，从根上消除「连接池耗尽」这一类故障。
+    engine_kwargs["poolclass"] = NullPool
 else:
     engine_kwargs["pool_pre_ping"] = True
     engine_kwargs["pool_size"] = 10

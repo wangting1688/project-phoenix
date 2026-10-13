@@ -195,9 +195,62 @@ def render_final_video(
 
 class GenerateVideoRequest(BaseModel):
     script_id: Optional[int] = None
-    voice_profile_id: int
-    footage_id: int
+    voice_profile_id: Optional[int] = None
+    footage_id: Optional[int] = None
     with_lipsync: bool = True
+    # H3 照片生成讲解画面（新主链路）：给人像照片+场景即可，无需实拍素材
+    person_image: Optional[str] = None
+    scene: str = "lecture"            # park_walk/lecture/teahouse/street_walk 或英文描述
+    anchor_image: Optional[str] = None
+    hair_hint: str = ""
+    width: Optional[int] = None
+    height: Optional[int] = None
+    seed: int = 400000
+
+
+def _assert_h3_ready() -> None:
+    """提交前探一次 GPU worker，不可用就立刻返回可读原因。
+
+    以前这个检查只在真正开跑时才做（H3VideoEngine.available()），后果是用户
+    点下「生成视频」后要等十几分钟才看到一个 "ComfyUI(8188) 未运行" 的失败——
+    中间那段等待完全没有产出（线上任务 60 即如此）。
+    探针失败时给一次重试机会：隧道抖动不该把用户挡在门外；
+    仍然不通就明确说明，让用户稍后再点，而不是白等。
+    """
+    import os
+    import time as _time
+
+    base = os.environ.get("H3_REMOTE_HTTP", "").strip()
+    if not base:
+        return  # 本地直连模式，交给引擎自己的 health 判断
+
+    import requests
+
+    url = base.rstrip("/") + "/h3/health"
+    last = ""
+    for attempt in (1, 2):
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                body = r.json() or {}
+                if body.get("comfyui"):
+                    return
+                last = "画面生成服务（ComfyUI）未就绪"
+            else:
+                last = f"画面生成服务返回异常（{r.status_code}）"
+        except requests.exceptions.Timeout:
+            last = "画面生成服务响应超时"
+        except requests.exceptions.ConnectionError:
+            # 别把 ConnectionError/HTTPConnectionPool 这种原文糊给用户
+            last = "连接不上画面生成服务"
+        except Exception:
+            last = "画面生成服务探测异常"
+        if attempt == 1:
+            _time.sleep(3)
+    raise HTTPException(
+        status_code=503,
+        detail=f"视频生成服务暂时不可用（{last}），请稍等 1 分钟后重试。",
+    )
 
 
 @router.post("/generate/{project_id}", response_model=ApiResponse[dict])
@@ -229,6 +282,10 @@ def generate_video(
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在或已删除")
 
+    # 先确认 GPU 侧可服务，再落任务。这个检查必须放在最前面（在建任务之前）：
+    # 否则用户等十几分钟才拿到一个 "ComfyUI(8188) 未运行" 的失败。
+    _assert_h3_ready()
+
     task_id = VideoProducer.create_task(
         project_id=project_id,
         user_id=current_user.id,
@@ -236,6 +293,13 @@ def generate_video(
         voice_profile_id=body.voice_profile_id,
         footage_id=body.footage_id,
         with_lipsync=body.with_lipsync,
+        person_image=body.person_image,
+        scene=body.scene,
+        anchor_image=body.anchor_image,
+        hair_hint=body.hair_hint,
+        width=body.width,
+        height=body.height,
+        seed=body.seed,
     )
 
     return ApiResponse(data={"task_id": task_id, "status": "running"})

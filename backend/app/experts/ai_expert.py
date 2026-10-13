@@ -33,6 +33,28 @@ class MockAIProvider:
     def generate_content(prompt: str) -> str:
         import random
         try:
+            if "内容策略专家和短视频导演" in prompt:
+                topic = "unknown"
+                for line in prompt.split("\n"):
+                    if "topic" in line.lower():
+                        topic = line.split(":")[-1].strip()
+                        break
+                return json.dumps({
+                    "title": f"{topic}的健康管理秘诀",
+                    "category": "健康知识",
+                    "audience": "40-55岁女性",
+                    "pain_point": "中年女性常见健康困扰",
+                    "content_angle": "从生活方式入手，科学改善健康",
+                    "consultation_score": random.randint(85, 95),
+                    "reason": "该主题咨询潜力高，适合目标受众",
+                    "style": "生活故事",
+                    "emotion": "共鸣",
+                    "scene": "厨房",
+                    "structure": "3秒吸引-20秒故事-30秒价值-7秒互动",
+                    "duration": 60,
+                    "opening_hook": "很多40岁后的女人，身体开始出现各种小问题"
+                }, ensure_ascii=False)
+
             if "Content Expert" in prompt or "内容策略" in prompt:
                 topic = "unknown"
                 for line in prompt.split("\n"):
@@ -176,6 +198,20 @@ class AIExpertService:
             if fallback is not None:
                 logger.warning("Ark 不可用，已回落到本地大模型")
             return fallback
+
+        if name == "deepseek":
+            # DeepSeek 官方 API（sk- Key 直连 api.deepseek.com），
+            # 不依赖火山方舟套餐，是当前文案生成的主力链路。
+            try:
+                from app.services.ai_service import DeepSeekProvider
+                return DeepSeekProvider()
+            except Exception as e:
+                logger.error("DeepSeekProvider 初始化失败: %s", e)
+            # 官方 API 不通时（欠费/断网），本机模型远比写死的模板文案有用
+            fallback = AIExpertService._try_local_llm(prefer_remote=True)
+            if fallback is not None:
+                logger.warning("DeepSeek 不可用，已回落到本地大模型")
+            return fallback
         return None
 
     @staticmethod
@@ -235,6 +271,18 @@ class AIExpertService:
         )
         return self._safe_generate(formatted_prompt)
 
+    def analysis_planning_expert(self, topic: str, user_profile: str = "",
+                                 platform: str = "抖音") -> Dict[str, Any]:
+        """合并内容分析与策划为一次云端调用，减少文案链路的串行轮次。"""
+        prompt = PromptLoader.load_prompt("analysis_planning_expert")
+        formatted_prompt = PromptLoader.format_prompt(
+            prompt,
+            topic=topic,
+            user_profile=user_profile,
+            platform=platform,
+        )
+        return self._safe_generate(formatted_prompt)
+
     def planning_expert(self, content_result: Dict[str, Any]) -> Dict[str, Any]:
         prompt = PromptLoader.load_prompt("planning_expert")
         formatted_prompt = PromptLoader.format_prompt(
@@ -243,13 +291,24 @@ class AIExpertService:
         )
         return self._safe_generate(formatted_prompt)
 
-    def script_expert(self, topic: str, planning: Dict[str, Any]) -> Dict[str, Any]:
+    def script_expert(self, topic: str, planning: Dict[str, Any],
+                      platform: str = "抖音", persona: str = "",
+                      hot_samples: str = "") -> Dict[str, Any]:
         prompt = PromptLoader.load_prompt("script_expert")
         formatted_prompt = PromptLoader.format_prompt(
             prompt,
             topic=topic,
-            planning=json.dumps(planning, ensure_ascii=False)
+            planning=json.dumps(planning, ensure_ascii=False),
+            platform=platform,
+            persona=persona,
+            hot_samples=hot_samples or "无",
         )
+        return self._safe_generate(formatted_prompt)
+
+    def critic_expert(self, script: str) -> Dict[str, Any]:
+        """对文案做自评打分，用于低分自动重写。"""
+        prompt = PromptLoader.load_prompt("critic_expert")
+        formatted_prompt = PromptLoader.format_prompt(prompt, script=script)
         return self._safe_generate(formatted_prompt)
 
     def compliance_expert(self, script: str) -> Dict[str, Any]:

@@ -8,6 +8,8 @@ class ContentProjectCreate(BaseModel):
     source_type: str = Field(..., description="recommend / viral_analysis / custom")
     topic: str
     category: Optional[str] = None
+    platform: Optional[str] = "抖音"
+    persona: Optional[str] = None
 
 
 class ContentProjectResponse(BaseModel):
@@ -38,6 +40,7 @@ class ScriptResponse(BaseModel):
     content: str
     version: int
     score: Optional[Decimal] = None
+    meta: Optional[dict] = None
 
     class Config:
         from_attributes = True

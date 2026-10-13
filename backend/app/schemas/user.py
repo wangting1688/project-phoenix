@@ -25,6 +25,7 @@ class UserUpdate(BaseModel):
 
 class UserResponse(UserBase):
     id: int
+    phone: Optional[str] = None
     role: str
     status: int
     tenant_id: Optional[int] = None
@@ -41,6 +42,7 @@ class LoginResponse(BaseModel):
 
 class CurrentUserResponse(BaseModel):
     id: int
+    phone: Optional[str] = None
     nickname: Optional[str] = None
     avatar: Optional[str] = None
     role: str = "anchor"

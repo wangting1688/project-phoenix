@@ -88,9 +88,9 @@ deploy_backend() {
   # tar 只覆盖不删除, 本地删掉的文件会残留在线上 (死代码/旧模块继续被 import)
   # 故按 app/ 下文件清单比对, 清除线上多余文件
   local local_list remote_list stale
-  local_list=$(cd "$PROJECT_DIR/backend" && find app -type f -name '*.py' -o -type f -name '*.txt' | sort)
-  remote_list=$($SSH "cd $REMOTE_ROOT/backend && find app -type f \( -name '*.py' -o -name '*.txt' \) | sort")
-  stale=$(comm -13 <(printf '%s\n' "$local_list") <(printf '%s\n' "$remote_list"))
+  local_list=$(cd "$PROJECT_DIR/backend" && find app -type f -name '*.py' -o -type f -name '*.txt' | LC_ALL=C sort)
+  remote_list=$($SSH "cd $REMOTE_ROOT/backend && find app -type f \( -name '*.py' -o -name '*.txt' \) | LC_ALL=C sort")
+  stale=$(LC_ALL=C comm -13 <(printf '%s\n' "$local_list") <(printf '%s\n' "$remote_list"))
   if [ -n "$stale" ]; then
     while IFS= read -r f; do
       [ -z "$f" ] && continue
@@ -177,10 +177,23 @@ verify() {
   if [ "$svc" = "active" ]; then c_ok "服务状态: active"
   else c_err "服务未运行 (状态: $svc)"; fail=1; fi
 
-  local api
-  api=$($SSH "curl -s -o /dev/null -w '%{http_code}' --max-time 15 http://127.0.0.1:8110/docs" 2>/dev/null || true)
-  if [ "$api" = "200" ]; then c_ok "后端 API: 200"
+  # 重启后进程需要几秒才就绪, 之前一次 curl 常撞上 502/000 误报, 改成重试
+  local api api_ok=0
+  for _ in 1 2 3 4 5 6; do
+    api=$($SSH "curl -s -o /dev/null -w '%{http_code}' --max-time 8 http://127.0.0.1:8110/docs" 2>/dev/null || true)
+    if [ "$api" = "200" ]; then api_ok=1; break; fi
+    sleep 5
+  done
+  if [ "$api_ok" = "1" ]; then c_ok "后端 API: 200"
   else c_err "后端 API 异常: $api"; fail=1; fi
+
+  # 关键模块导入冒烟: 缺依赖(如 requests)会在这里立刻暴露, 不再等用户点生成
+  if $SSH "cd $REMOTE_ROOT/backend && .venv/bin/python -c 'import requests, app.services.h3_video_engine'" 2>/dev/null; then
+    c_ok "关键模块导入: 正常"
+  else
+    c_err "关键模块导入失败 (requests / h3_video_engine)"
+    fail=1
+  fi
 
   local web
   web=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$SITE/" 2>/dev/null || true)

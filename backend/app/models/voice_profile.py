@@ -1,7 +1,7 @@
 """
 用户声纹档案 - 火山方舟豆包语音 Voice Cloning
 
-每个用户最多 1 个声纹 (业务规则, 软删除)
+每个用户最多 3 个声纹 (业务规则, 软删除)
 """
 from sqlalchemy import Column, String, Integer, Text, JSON
 from sqlalchemy.orm import relationship

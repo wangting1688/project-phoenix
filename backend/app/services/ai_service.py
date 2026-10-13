@@ -29,6 +29,28 @@ class MockAIProvider(AIProvider):
     def generate_content(self, prompt: str, model: str = None) -> str:
         import random
         try:
+            if "内容策略专家和短视频导演" in prompt:
+                topic = "unknown"
+                for line in prompt.split("\n"):
+                    if "topic" in line.lower():
+                        topic = line.split(":")[-1].strip()
+                        break
+                return json.dumps({
+                    "title": f"{topic}的健康管理秘诀",
+                    "category": "健康知识",
+                    "audience": "40-55岁女性",
+                    "pain_point": "中年女性常见健康困扰",
+                    "content_angle": "从生活方式入手，科学改善健康",
+                    "consultation_score": random.randint(85, 95),
+                    "reason": "该主题咨询潜力高，适合目标受众",
+                    "style": "生活故事",
+                    "emotion": "共鸣",
+                    "scene": "厨房",
+                    "structure": "3秒吸引-20秒故事-30秒价值-7秒互动",
+                    "duration": 60,
+                    "opening_hook": "很多40岁后的女人，身体开始出现各种小问题"
+                }, ensure_ascii=False)
+
             if "Content Expert" in prompt or "内容策略" in prompt:
                 topic = "unknown"
                 for line in prompt.split("\n"):
@@ -145,7 +167,7 @@ class OllamaProvider(AIProvider):
     跑 26B~30B 模型生成中文口播完全够用，还顺带满足「数据不出本机」。
 
     实测（script_expert 完整 prompt，要求输出结构化 JSON）：
-      gemma4:26b       12s，JSON 可解析，口语化最自然  -> 默认
+      qwen3.8:27b-q4_K_M  自然口语化、JSON 可解析  -> 默认
       qwen3-coder:30b   1s，速度最快但文风偏硬        -> 备选
       deepseek-r1:32b  60s 且强制输出思维链           -> 不适合
 
@@ -159,7 +181,11 @@ class OllamaProvider(AIProvider):
         # 配置一律走环境变量，缺省值写死。
         self.base_url = (os.environ.get("OLLAMA_URL")
                          or "http://127.0.0.1:11434").rstrip("/")
-        self.default_model = os.environ.get("OLLAMA_MODEL", "gemma4:26b")
+        # 主进程能从 .env 读 OLLAMA_MODEL (settings)，但 GPU worker 环境没有
+        # settings，所以仍优先取 os.environ，再回落 settings，最后写死缺省。
+        self.default_model = (os.environ.get("OLLAMA_MODEL")
+                              or getattr(settings, "OLLAMA_MODEL", None)
+                              or "qwen3.8:27b-q4_K_M")
         self.timeout = float(os.environ.get("OLLAMA_TIMEOUT", "600"))
 
     def _post(self, path: str, payload: dict):
@@ -398,10 +424,153 @@ class ArkProvider(AIProvider):
         return [self.default_model]
 
 
+class DeepSeekProvider(AIProvider):
+    """DeepSeek 官方 API（OpenAI 兼容 /chat/completions）。
+
+    为什么要单独一个 provider：火山方舟那条线（ArkProvider 走 /responses）
+    依赖 Agent Plan 专用 Key，受套餐配额与「Agent Plan / Coding Plan /
+    普通 Ark 三类 Key 不可混用」限制，实测两把 key 均已失效、整条链路
+    降级到写死模板。DeepSeek 官方 sk- Key 直连 api.deepseek.com，链路最短、
+    成本最低，且模型正是文案需要的 DeepSeek-V4.1-Flash。
+
+    实测（2026-10-11）：请求 model=deepseek-chat 时服务端回传
+    deepseek-flash，说明该别名已指向 V4.1 Flash。
+
+    JSON 输出：文案链路要求上层 json.loads 可解析，所以默认带
+    response_format=json_object。但 DeepSeek 要求 prompt 内含 "json"
+    字样，否则 400 —— 因此命中 400 时自动去掉该参数重试。
+    """
+
+    def __init__(self):
+        # 与 OllamaProvider 同理：优先读环境变量，再回落 settings，
+        # 保证本模块在无 pydantic_settings 的环境里也能加载。
+        self.base_url = (os.environ.get("DEEPSEEK_BASE_URL")
+                         or getattr(settings, "DEEPSEEK_BASE_URL", None)
+                         or "https://api.deepseek.com").rstrip("/")
+        self.api_key = (os.environ.get("DEEPSEEK_API_KEY")
+                        or getattr(settings, "DEEPSEEK_API_KEY", None))
+        self.default_model = (os.environ.get("DEEPSEEK_MODEL")
+                              or getattr(settings, "DEEPSEEK_MODEL", None)
+                              or "deepseek-chat")
+        self.timeout = float(os.environ.get("DEEPSEEK_TIMEOUT", "120"))
+        self.temperature = float(os.environ.get("DEEPSEEK_TEMPERATURE", "1.0"))
+        self.max_tokens = int(os.environ.get("DEEPSEEK_MAX_TOKENS", "4096"))
+        self.max_attempts = int(os.environ.get("DEEPSEEK_MAX_ATTEMPTS", "4"))
+        self.retry_base_delay = float(
+            os.environ.get("DEEPSEEK_RETRY_BASE_DELAY", "2"))
+        self.force_json = (os.environ.get("DEEPSEEK_FORCE_JSON", "1")
+                           .lower() not in ("0", "false", "no"))
+        if not self.api_key:
+            raise ValueError("DEEPSEEK_API_KEY 未配置")
+
+    def _headers(self) -> dict:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def available(self) -> bool:
+        try:
+            with httpx.Client(timeout=10) as client:
+                r = client.get(self.base_url + "/models", headers=self._headers())
+            return r.status_code == 200
+        except Exception as e:
+            logger.warning("DeepSeek 探活失败: %s", e)
+            return False
+
+    def _payload(self, prompt: str, model: str, use_json: bool) -> dict:
+        payload = {
+            "model": model or self.default_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+        if use_json:
+            payload["response_format"] = {"type": "json_object"}
+        return payload
+
+    def generate_content(self, prompt: str, model: str = None) -> str:
+        url = f"{self.base_url}/chat/completions"
+        use_json = self.force_json
+        last_err: Optional[Exception] = None
+        for attempt in range(self.max_attempts):
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    resp = client.post(url, headers=self._headers(),
+                                       json=self._payload(prompt, model, use_json))
+                # 402 = 余额不足，重试毫无意义，直接给出准确原因
+                if resp.status_code == 402:
+                    logger.error("DeepSeek 余额不足: %s", resp.text[:200])
+                    return json.dumps(
+                        {"error": "deepseek_insufficient_balance"},
+                        ensure_ascii=False)
+                # prompt 内缺 "json" 字样时 response_format 会被拒（400），
+                # 去掉它立刻重试，不占用退避次数。
+                if resp.status_code == 400 and use_json:
+                    logger.warning("DeepSeek 拒绝 response_format，改为自然输出重试")
+                    use_json = False
+                    continue
+                if resp.status_code == 429:
+                    quota_msg = _quota_exceeded(resp)
+                    if quota_msg:
+                        raise AIQuotaExceededError(quota_msg)
+                if resp.status_code in (429, 500, 502, 503, 504):
+                    raise _RetryableHTTPError(resp.status_code,
+                                              resp.headers.get("Retry-After"))
+                resp.raise_for_status()
+                data = resp.json()
+                choices = data.get("choices") or []
+                text = ""
+                if choices:
+                    text = ((choices[0].get("message") or {}).get("content") or "")
+                text = text.strip()
+                if not text:
+                    return json.dumps({"error": "deepseek_empty_response"},
+                                      ensure_ascii=False)
+                # 兜底剥围栏：模型偶发在 JSON 前后加说明或 ```json
+                return _strip_json_fence(text)
+            except AIQuotaExceededError as e:
+                logger.error("DeepSeek 配额耗尽，无法生成内容: %s", e)
+                return json.dumps({"error": f"ai_quota_exceeded: {e}"},
+                                  ensure_ascii=False)
+            except Exception as e:
+                last_err = e
+                if attempt < self.max_attempts - 1:
+                    delay = self._retry_delay(e, attempt)
+                    logger.warning("DeepSeek 第 %s/%s 次失败(%s)，%.1fs 后重试",
+                                   attempt + 1, self.max_attempts,
+                                   type(e).__name__, delay)
+                    time.sleep(delay)
+                    continue
+                logger.error("DeepSeek 调用失败 (%s 次)，将降级为模板文案: %s",
+                             self.max_attempts, e)
+                return json.dumps(
+                    {"error": f"deepseek_provider_failed: {type(e).__name__}: {e}"},
+                    ensure_ascii=False)
+        return json.dumps({"error": f"deepseek_provider_unreachable: {last_err}"},
+                          ensure_ascii=False)
+
+    def _retry_delay(self, err: Exception, attempt: int) -> float:
+        """退避时长。限流优先按服务端 Retry-After，否则指数退避加抖动。"""
+        import random
+        if isinstance(err, _RetryableHTTPError) and err.retry_after:
+            try:
+                return min(float(err.retry_after), 30.0)
+            except (TypeError, ValueError):
+                pass
+        base = self.retry_base_delay * (2 ** attempt)
+        return min(base + random.uniform(0, 0.5), 30.0)
+
+    def get_model_list(self) -> list:
+        return [self.default_model]
+
+
 class AIService:
     PROVIDERS = {
         "mock": MockAIProvider,
         "ark": ArkProvider,
+        "deepseek": DeepSeekProvider,
         "ollama": OllamaProvider,
         "remote_ollama": RemoteOllamaProvider,
     }

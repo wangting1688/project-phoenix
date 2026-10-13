@@ -3,9 +3,11 @@ import json
 import logging
 import re
 import random
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 from app.core.database import SessionLocal
+from app.core.config import settings
 from app.models import ViralAnalysisSession, ViralPattern, ContentOpportunity, CreatorProfile
 from app.services.ai_service import AIService
 from app.services.prompt_service import PromptService
@@ -37,6 +39,7 @@ class ViralAnalysisService:
         """创建分析会话
 
         video_info: 用户手动录入的真实视频信息, 传入后分析将基于真实数据
+        抖音链接会先尝试自动解析标题/时长；拿不到也不阻塞，留待 analyze 阶段。
         """
         platform = self._extract_platform(video_url)
 
@@ -48,6 +51,28 @@ class ViralAnalysisService:
         )
         if video_info and str(video_info.get("title") or "").strip():
             session.original_data = self._build_basic_info(video_info, video_url, platform)
+        else:
+            auto_meta = {}
+            if platform == "抖音":
+                try:
+                    from app.services import douyin_fetcher
+                    video_id = douyin_fetcher.resolve_video_id(video_url)
+                    if video_id:
+                        auto_meta = douyin_fetcher.fetch_video_meta(video_id)
+                        auto_meta["video_id"] = video_id
+                except Exception as e:
+                    logger.warning("抖音元数据自动解析失败: %s", e)
+            if auto_meta.get("title"):
+                session.original_data = {
+                    "title": auto_meta["title"],
+                    "platform": platform,
+                    "duration": auto_meta.get("duration"),
+                    "video_id": auto_meta.get("video_id"),
+                    "cover_url": auto_meta.get("cover_url", ""),
+                    "data_source": "auto",
+                }
+            else:
+                session.original_data = {"platform": platform, "data_source": "auto_pending"}
         self.db.add(session)
         self.db.commit()
         self.db.refresh(session)
@@ -91,12 +116,49 @@ class ViralAnalysisService:
         session.status = "analyzing"
         self.db.commit()
 
-        # 1. 基础信息必须来自用户录入 (系统无采集能力, 不编造假视频数据)
+        # 1. 基础信息：手动录入优先，抖音链接自动补标题/时长/文案
         basic_info = session.original_data or {}
-        if not (basic_info.get("data_source") == "manual" and basic_info.get("title")):
+        transcript = str(basic_info.get("transcript") or "").strip()
+        title = str(basic_info.get("title") or "").strip()
+        duration = basic_info.get("duration")
+        cover_url = str(basic_info.get("cover_url") or "")
+        video_id = str(basic_info.get("video_id") or "")
+        is_manual = basic_info.get("data_source") == "manual"
+
+        # 抖音：自动补齐元数据 + 下载转写口播文案
+        if session.platform == "抖音":
+            auto_meta, auto_transcript = self._auto_fetch(
+                session.video_url, video_id or None
+            )
+            video_id = video_id or auto_meta.get("video_id") or ""
+            if not title:
+                title = str(auto_meta.get("title") or "").strip()
+            if not duration:
+                duration = auto_meta.get("duration")
+            if not cover_url:
+                cover_url = str(auto_meta.get("cover_url") or "")
+            transcript = transcript or auto_transcript
+
+        if not title and transcript:
+            title = transcript[:30].strip("。.!！?？\n")
+
+        if not title:
             session.status = "pending"
             self.db.commit()
-            raise ValueError("请先填写对标视频的真实信息（标题必填），系统不会编造视频数据")
+            raise ValueError(
+                "无法自动获取视频标题（链接解析或转写失败），"
+                "请手动填写标题或稍后重试"
+            )
+
+        basic_info = {
+            "title": title,
+            "platform": session.platform or "未知",
+            "duration": duration,
+            "video_id": video_id,
+            "cover_url": cover_url,
+            "transcript": transcript,
+            "data_source": "manual" if is_manual else "auto",
+        }
         basic_info = {k: v for k, v in basic_info.items() if v is not None}
         session.original_data = basic_info
 
@@ -117,6 +179,63 @@ class ViralAnalysisService:
         self._save_viral_pattern(analysis_result)
 
         return analysis_result
+
+    def _auto_fetch(
+        self, video_url: str, known_video_id: Optional[str] = None
+    ) -> tuple:
+        """抖音自动采集：解析元数据 + 下载视频转写口播文案。
+
+        返回 (meta, transcript)。拿不到任何数据时不抛异常，由调用方决定降级。
+        转写派发到本地 GPU worker 的 /asr（复用 TTS/H3 反向隧道）。
+        """
+        import uuid as _uuid
+        from app.services import douyin_fetcher
+
+        meta = {}
+        transcript = ""
+        try:
+            video_id = known_video_id or douyin_fetcher.resolve_video_id(video_url)
+            if not video_id:
+                return meta, transcript
+            meta = douyin_fetcher.fetch_video_meta(video_id)
+            meta["video_id"] = video_id
+
+            worker = (
+                settings.TTS_REMOTE_HTTP
+                or settings.H3_REMOTE_HTTP
+                or settings.LLM_REMOTE_HTTP
+                or ""
+            ).strip()
+            if not worker:
+                logger.warning("未配置 worker 地址，跳过口播文案转写")
+                return meta, transcript
+
+            tmp_dir = Path(settings.STORAGE_PATH) / "tmp" / "viral"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            video_path = tmp_dir / f"{_uuid.uuid4().hex}.mp4"
+            try:
+                if not douyin_fetcher.download_video(video_id, video_path):
+                    logger.warning("抖音视频下载失败，跳过转写")
+                    return meta, transcript
+                import requests as _rq
+                with open(video_path, "rb") as f:
+                    r = _rq.post(
+                        worker.rstrip("/") + "/asr",
+                        files={"video": ("v.mp4", f, "video/mp4")},
+                        timeout=240,
+                    )
+                if r.status_code == 200:
+                    transcript = (r.json() or {}).get("text", "").strip()
+                else:
+                    logger.warning("转写接口返回 %s: %s", r.status_code, r.text[:200])
+            finally:
+                try:
+                    video_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning("抖音自动采集失败: %s", e)
+        return meta, transcript
 
     def generate_opportunity(self, session_id: int) -> Dict[str, Any]:
         """基于分析结果生成原创内容机会"""

@@ -250,6 +250,13 @@ class CreationStudioService:
         ai = AIExpertService()
         result = ai.script_expert(topic, planning_hint)
 
+        # 真实 AI 失败时会降级返回写死模板文案。交付模板等于骗用户，必须拒绝。
+        if result.get("_degraded"):
+            reason = result.get("_degraded_reason") or "AI 服务不可用"
+            raise ValueError(
+                f"AI 未实时生成文案（已降级为模板，已拒绝保存）: {reason}"
+            )
+
         version_key = {
             "story": "story_version",
             "knowledge": "knowledge_version",

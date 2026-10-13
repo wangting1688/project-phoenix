@@ -23,6 +23,11 @@ class Settings(BaseSettings):
 
     STORAGE_PATH: str = "./storage"
 
+    # 微信网页授权登录（服务号/开放平台网页应用）
+    WECHAT_APP_ID: Optional[str] = None
+    WECHAT_APP_SECRET: Optional[str] = None
+    WECHAT_REDIRECT_URI: Optional[str] = None  # 默认用前端登录页
+
     # 口型同步远程 HTTP 服务地址（方案A：本机 GPU worker 经反向 SSH 隧道暴露到 live:18080）
     # 形如 http://127.0.0.1:18080 则 lipsync_service 通过 HTTP 派发到本机 GPU 跑口型同步
     LIPSYNC_REMOTE_HTTP: str = ""
@@ -41,18 +46,30 @@ class Settings(BaseSettings):
     # 演示素材是否允许用户编辑标签（scene/emotion/topics）
     DEMO_FOOTAGE_ALLOW_EDIT_TAGS: bool = False
 
-    # AI 配置 (mock / ark)
+    # AI 配置 (mock / ark / deepseek / ollama / remote_ollama)
     AI_PROVIDER: str = "mock"
     ARK_BASE_URL: Optional[str] = None
     ARK_API_KEY: Optional[str] = None
     ARK_MODEL: Optional[str] = None
     ARK_TIMEOUT: int = 120
+    # DeepSeek 官方 API（OpenAI 兼容 /chat/completions，key 为 sk- 开头）
+    # 与火山方舟 ArkProvider 的区别：不经过 Agent Plan，彻底绕开
+    # 「Agent Plan / Coding Plan / 普通 Ark 三类 Key 不可混用」的坑。
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    DEEPSEEK_API_KEY: Optional[str] = None
+    # deepseek-chat 是官方长期别名，实测（2026-10-11）服务端解析为 deepseek-flash（V4.1 Flash）
+    DEEPSEEK_MODEL: str = "deepseek-chat"
+    DEEPSEEK_TIMEOUT: int = 120
+    DEEPSEEK_TEMPERATURE: float = 1.0
+    DEEPSEEK_MAX_TOKENS: int = 4096
     # 本机 Ollama（AI_PROVIDER=ollama 时启用，也作为 ark 不可用时的回落）
     OLLAMA_URL: Optional[str] = None
     OLLAMA_MODEL: Optional[str] = None
     OLLAMA_TIMEOUT: int = 600
     # 线上经反向隧道调本机 worker 的 /llm（缺省复用 TTS_REMOTE_HTTP 同一条隧道）
     LLM_REMOTE_HTTP: Optional[str] = None
+    # 线上经反向隧道调本机 GPU worker 的 /h3（与 TTS/LIPSYNC 同一条隧道）
+    H3_REMOTE_HTTP: Optional[str] = None
 
     # 火山方舟豆包语音 TTS (Voice Cloning) — 独立新账号
     # 鉴权: 训练/合成都用 X-Api-Key header (新控制台)

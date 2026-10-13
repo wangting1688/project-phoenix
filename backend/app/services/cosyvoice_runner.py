@@ -66,7 +66,8 @@ def serve():
             tts.TTS_MAX_TEMPO = float(req.get("max_tempo", 1.5))
             res = tts._synthesize_inproc(
                 (req.get("text") or "").strip(), req["ref_wav"], ref_text,
-                req["out"], target_cps=float(req.get("target_cps", 4.4)))
+                req["out"], target_cps=float(req.get("target_cps", 4.4)),
+                variant=int(req.get("variant", 0) or 0))
             if res:
                 print("PHXRESP " + json.dumps({"ok": True, "out": str(res)}), flush=True)
             else:
