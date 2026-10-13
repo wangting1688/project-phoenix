@@ -78,6 +78,19 @@ class TestStaticResourceSecurity(unittest.TestCase):
         import app.main as main_mod
         main_mod.STORAGE_DIR = Path(cls.tmp_storage).resolve()
         from app.main import app
+
+        # 建表：_check_output_ownership 对不符合 render_<pid>_/h3_p<pid>_ 命名的
+        # 文件会**兜底按 Video.url 反查归属**（见 app/main.py 该函数注释，
+        # 目的是防止命名约定变化时合法成片被误 403）。这条兜底路径会真实查询
+        # videos / content_projects 表。
+        #
+        # 测试库由 conftest.py 锁到进程私有临时 sqlite，默认是空文件，不建表
+        # 就会抛 OperationalError: no such table: videos —— 表现是把一个本应
+        # 返回 403 的用例变成 500，看起来像代码挂了，其实是测试环境缺 schema。
+        # create_all 幂等，对已存在的表不做任何改动。
+        from app.core.database import Base, engine as db_engine
+        Base.metadata.create_all(bind=db_engine)
+
         cls.client = TestClient(app)
 
     @classmethod
@@ -271,13 +284,21 @@ class TestCheckOutputOwnership(unittest.TestCase):
         db.query.assert_not_called()
 
     def test_bad_filename_false(self):
-        """文件名格式不对 → False，不查 DB"""
+        """文件名不符合成片命名约定、且按 url 反查也查不到 → False
+
+        契约说明（别把断言改回「不查 DB」）：
+        实现里对不匹配 render_<pid>_ / h3_p<pid>_ 的文件名**会兜底按
+        Video.url 反查归属**，这是有意设计 —— 历史上改过一次成片命名，
+        导致老成片全部 403，用户以为视频丢了。所以这里断言的是
+        「最终拒绝」，而不是「完全不查 DB」。
+        空库下反查不到记录，因此结果仍为 False。
+        """
         from app.main import _check_output_ownership
         db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = None
         result = _check_output_ownership(
             "sneaky.mp4", user_id=1, tenant_id=None, role="anchor", db=db)
         self.assertFalse(result)
-        db.query.assert_not_called()
 
     def test_no_video_false(self):
         """查不到 video → False"""
