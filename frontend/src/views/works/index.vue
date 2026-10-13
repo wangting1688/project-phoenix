@@ -266,12 +266,17 @@ function goGenerate(work: ContentProject) {
 }
 
 /**
- * 去创作页生成视频：把选题一起带过去，用户点一下就能接着往下走，
- * 不用在创作页重新输一遍主题。
+ * 接着这个作品往下做视频（作品页「生成视频」按钮 & 点击卡片）。
+ *
+ * 必须带上 project_id：这个作品的文案早就生成好了（plan_ready = 方案就绪、待出片），
+ * 创作页靠 project_id 恢复已有文案并直接落到「声音」步。只带 topic 的话，创作页
+ * 会判定成「换了选题的新创作」，把文案清掉让用户重新生成一遍 —— 线上实际反馈就是这个。
  */
 function goCreateVideo(work: ContentProject) {
   const topic = (work.topic || '').trim()
-  router.push({ path: '/creation', query: topic ? { topic } : {} })
+  const q: Record<string, string> = { project_id: String(work.id) }
+  if (topic) q.topic = topic
+  router.push({ path: '/creation', query: q })
 }
 
 async function handleDelete(work: ContentProject) {

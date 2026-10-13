@@ -648,11 +648,16 @@ function extractApiError(err: any): string {
  * 这里原来挂的是「生成视频方案（compose）→ 渲染」这条旧链路：它依赖
  * 视频素材库里的实拍片段，实测一直走不通——点下去只会弹「请先上传素材」，
  * 而素材库里的分类区又是空的，用户根本找不到上传入口，卡死在结果页。
- * 那条链路已整体下线，所以这里只做跳转，把选题带过去避免重填。
+ * 那条链路已整体下线，所以这里只做跳转。
+ *
+ * 跳转必须带 project_id：这个项目的文案已经生成好了，创作页据此恢复它并
+ * 直接落到「声音」步；只带 topic 会被当成新创作，用户得重新生成一遍文案。
  */
 function goCreateVideo() {
+  const pid = projectId.value || projectIdQuery
   const topic = (project.value as any)?.topic || ''
   const q: Record<string, string> = {}
+  if (pid) q.project_id = String(pid)
   if (topic) q.topic = String(topic).slice(0, 100)
   router.push({ path: '/creation', query: q })
 }

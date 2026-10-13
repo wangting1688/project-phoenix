@@ -373,7 +373,7 @@ import {
   IClock,
   ICircleClose,
 } from '@/utils/icons'
-import { createProject, getProjectScripts, getTaskStatus, updateScript } from '@/api/creation'
+import { createProject, getProject, getProjectScripts, getTaskStatus, updateScript } from '@/api/creation'
 import { generateVideo } from '@/api/video'
 import { getVoiceProfiles, testVoiceProfile, type VoiceProfile } from '@/api/voiceProfile'
 import { uploadAnchorPortrait } from '@/api/footage'
@@ -879,6 +879,15 @@ function matchIndustry(category: string): string {
 }
 
 function applyRouteQuery() {
+  // project_id：作品页 / 结果页的「生成视频」跳进来，含义是「接着这个已有作品做视频」。
+  // 必须最先判定 —— 这类跳转通常同时带着 topic，若先走下面的 topic 分支，会被判定成
+  // 「换了选题 ⇒ 一次新的创作」而把 projectId 与已生成的文案一起清空，
+  // 用户就得从头再生成一遍文案（线上实际反馈正是如此）。
+  const pid = Number(route.query.project_id || 0)
+  if (pid > 0 && !generationActive.value) {
+    return { hasQuery: true, resetForNewTopic: false, jumpedToStep: false, resumeProjectId: pid }
+  }
+
   const topic = String(route.query.topic || '').trim()
   let resetForNewTopic = false
 
@@ -917,7 +926,57 @@ function applyRouteQuery() {
     jumpedToStep = true
   }
 
-  return { hasQuery: !!(route.query.topic || route.query.step), resetForNewTopic, jumpedToStep }
+  return { hasQuery: !!(route.query.topic || route.query.step), resetForNewTopic, jumpedToStep, resumeProjectId: 0 }
+}
+
+/**
+ * 载入已有作品，接着它的文案继续往下走（作品页 / 结果页的「生成视频」入口）。
+ *
+ * 背景：这类作品的文案早就生成好了（作品状态 plan_ready = 文案就绪、待出片），
+ * 但老实现只把 topic 带过来，创作页据此判定为「新创作」，把 projectId 和 scripts
+ * 一并清空、退回选题步 —— 用户看到的就是「方案已完成，点生成视频又要重新写文案」。
+ *
+ * 这里改成用 project_id 恢复：拉回已有文案并默认选中，直接落到「声音」步，
+ * 用户只需选声音 → 传照片 → 开始生成。
+ */
+async function resumeExistingProject(pid: number) {
+  // 草稿指向的不是这个作品时（含草稿残留了生成态、projectId 却为空的情况），
+  // 先丢掉那条进度的前端追踪。服务器上的任务照常跑完，用户可回作品页查看 ——
+  // 否则 onMounted 末尾的 resumeGeneration 会把用户拽回上一件作品的进度页，
+  // 看起来像「点了这个作品却进了那个作品」。
+  // 草稿本来就是同一个项目时保留：那个任务可能仍在进行，随后会自动恢复到进度页。
+  if (projectId !== pid) {
+    generationActive.value = false
+    activeTaskId.value = null
+  }
+  stepLoading.value = true
+  try {
+    const [proj, scriptList] = await Promise.all([
+      getProject(pid),
+      getProjectScripts(pid).catch(() => [] as any[]),
+    ])
+    projectId = pid
+    if (proj?.topic) formData.value.topic = proj.topic
+    scripts.value = (scriptList as any[]) || []
+    selectedScriptId.value = scripts.value.length > 0 ? scripts.value[0].id : null
+
+    if (scripts.value.length > 0) {
+      // 文案已就绪：跳到「声音」步（后续是 形象 → 生成）
+      currentStep.value = 2
+      ElMessage.success('已载入该作品的文案，选好声音、上传照片就能生成视频')
+    } else {
+      // 兜底：项目在、但文案没取到（仍在生成或异常）。留在文案步继续轮询，
+      // 不能假装有文案，否则下一步会因参数不全静默失败。
+      currentStep.value = 1
+      await pollScripts()
+    }
+    saveDraft()
+  } catch (e) {
+    console.error('载入已有作品失败', e)
+    ElMessage.error('载入该作品的文案失败，请回「我的作品」重试')
+  } finally {
+    stepLoading.value = false
+  }
 }
 
 // ===== 导航控制 =====
@@ -1168,16 +1227,17 @@ function stopPolling() {
   }
 }
 
-onMounted(() => {
+onMounted(async () => {
   const restored = loadDraft()
 
   // 外部带参跳入必须放在草稿恢复之后：同一选题延续进度，换了选题则开一次新的创作
   const nav = applyRouteQuery()
 
-  // 按最终所在步骤补齐列表数据，使已选声音可见
-  if (currentStep.value >= 2) loadVoices()
-
-  if (nav.resetForNewTopic) {
+  if (nav.resumeProjectId) {
+    // 带 project_id = 接着已有作品做视频（作品页 / 结果页的「生成视频」）。
+    // 这类必须恢复它的文案并落到后续步骤，绝不能按「新创作」清空重来。
+    await resumeExistingProject(nav.resumeProjectId)
+  } else if (nav.resetForNewTopic) {
     ElMessage.success('已填入推荐选题，确认后点「下一步」')
   } else if (restored) {
     // 兜底：恢复后若文案列表已有但未选中（草稿 selectedScriptId 丢失），自动选第一个，
@@ -1190,6 +1250,10 @@ onMounted(() => {
       pollScripts()
     }
   }
+
+  // 按最终所在步骤补齐列表数据，使已选声音可见
+  // （带 project_id 恢复时 currentStep 会被 resumeExistingProject 落到 2）
+  if (currentStep.value >= 2) loadVoices()
 
   // 刷新/离开页面后，若仍有进行中的生成任务，自动恢复轮询并跳结果页
   if (generationActive.value && activeTaskId.value) {
