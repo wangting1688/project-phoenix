@@ -35,4 +35,22 @@ jobs:
 
       - name: Run tests
         working-directory: backend
-        run: python -m pytest
+        shell: bash
+        # 失败时把用例名打成 ::error:: 注解。
+        #
+        # 背景：GitHub 对「Run tests 步骤失败」只给一句 "Process completed with
+        # exit code 1"，真正的断言输出埋在 job 日志里；而下载 job 日志需要
+        # 仓库 admin 权限（公开仓库也不行，API 返回 403）。结果就是手机上收到
+        # 「All jobs have failed」的邮件，却完全看不出是哪个用例、为什么挂 ——
+        # 只能回到开发机上猜。注解会直接显示在邮件与 Actions 页面上，省掉这一跳。
+        run: |
+          set +e
+          python -m pytest -q 2>&1 | tee /tmp/pytest.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" -ne 0 ]; then
+            echo "::error::pytest 退出码 $code"
+            grep -E "^(FAILED|ERROR) " /tmp/pytest.log | head -20 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
+          exit "$code"
