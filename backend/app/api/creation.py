@@ -118,16 +118,29 @@ def _compute_display_status(project: ContentProject, video: Optional[Video], tas
         return "draft"
     if project.status == "processing":
         return "processing"
+
+    # 历史遗留状态归一：语义都是「文案/方案就绪、还没出片」，等价于 plan_ready。
+    #   - "ready"：早期 creation_studio 链路（/creation-studio）写进去的，线上存量 7 条
+    #   - "ai_plan_ready" / "planned"：更早的 Video.status 写法
+    # 不归一的话，这些值会从最下面那句兜底 `return project.status` 漏给前端：
+    # 前端 map 里没有这些键，卡片会原样显示英文 "ready"，且不匹配任何按钮分支
+    # —— 用户看到的就是一个「只剩删除按钮」的作品卡。
+    if project.status in ("ready", "ai_plan_ready", "planned"):
+        if video and video.status in ("rendered", "completed") and video.url:
+            return "video_ready"
+        return "plan_ready"
+
     # completed 状态下细分
     if project.status == "completed":
         if video and video.status in ("rendered", "completed") and video.url:
             return "video_ready"
         # 视频还没渲染，或只是方案就绪
         return "plan_ready"
-    # 其他未知状态兜底
-    if video and video.status == "rendered" and video.url:
+    # 其他未知状态兜底：有可播放视频就按成片展示，否则按「方案就绪」处理，
+    # 不要把原始枚举直接透给前端（前端不认识，会退化成英文文案 + 无操作按钮）。
+    if video and video.status in ("rendered", "completed") and video.url:
         return "video_ready"
-    return project.status or "draft"
+    return "plan_ready"
 
 
 @router.get("/projects", response_model=ApiResponse[dict])
@@ -176,6 +189,7 @@ def list_projects(
                     "display_status": _compute_display_status(
                         p, videos.get(p.id), tasks.get(p.id)
                     ),
+                    "task_id": t.id if (t := tasks.get(p.id)) else None,
                     "error_message": t.error_message if (t := tasks.get(p.id)) else None,
                 }
                 for p in projects
@@ -240,6 +254,8 @@ def get_project(
         data["video_status"] = video.status
         data["cover_url"] = video.cover_url
     data["display_status"] = _compute_display_status(project, video, task)
+    # 透出任务 id：结果页据此接入轮询（从作品页「查看进度」进来时没带 task_id）
+    data["task_id"] = task.id if task else None
     if task:
         data["error_message"] = task.error_message
     return ApiResponse(data=data)

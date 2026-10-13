@@ -20,6 +20,9 @@ class ContentProjectResponse(BaseModel):
     category: Optional[str] = None
     status: str
     workflow_status: Optional[str] = None
+    # 该项目的主创作任务 id。结果页靠它接入任务轮询 —— 否则从作品页
+    # 「查看进度」跳进来时拿不到任务，进度条永远停在 0%。
+    task_id: Optional[int] = None
     video_url: Optional[str] = None
     video_duration: Optional[int] = None
     video_status: Optional[str] = None

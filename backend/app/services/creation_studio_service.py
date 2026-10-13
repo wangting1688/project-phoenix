@@ -203,7 +203,12 @@ class CreationStudioService:
         )
         self.db.add(content)
 
-        project.status = "ready"
+        # 写入侧统一枚举：文案/方案就绪 → "completed"（与主创作链路一致，
+        # _compute_display_status 据此算出 plan_ready）。
+        # 早期这里落的是 "ready" —— 它不在状态机枚举内，会被当成未知状态透到
+        # 前端，卡片显示英文 "ready" 且不匹配任何按钮分支（只剩一个删除按钮）。
+        # 存量脏数据由 _compute_display_status 的历史归一兜住，此处止住增量。
+        project.status = "completed"
         project.workflow_status = "completed"
 
         session.workflow_state = "completed"
