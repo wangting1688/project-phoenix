@@ -36,7 +36,7 @@
           <div class="work-cover">
             <img
               v-if="work.cover_url"
-              :src="withToken(work.cover_url)"
+              :src="coverSrcMap[work.id]"
               class="cover-image"
               alt="cover"
               @error="coverError = true"
@@ -79,7 +79,7 @@
               <template v-if="work.display_status === 'video_ready'">
                 <a
                   v-if="work.video_url"
-                  :href="withToken(work.video_url)"
+                  :href="videoSrcMap[work.id]"
                   target="_blank"
                   class="action-btn download"
                   @click.stop
@@ -193,12 +193,15 @@ import {
 } from '@/utils/icons'
 import { getProjects, deleteProject, type ContentProject } from '@/api/creation'
 import { useUserStore } from '@/stores/user'
+import { resolveMediaUrls } from '@/utils/mediaUrl'
 
 const router = useRouter()
 const userStore = useUserStore()
 
 const activeTab = ref('all')
 const coverError = ref(false)
+const coverSrcMap = ref<Record<number, string>>({})
+const videoSrcMap = ref<Record<number, string>>({})
 
 const tabs = [
   { label: '全部', value: 'all' },
@@ -214,12 +217,6 @@ const filteredWorks = computed(() => {
   if (activeTab.value === 'all') return works.value
   return works.value.filter(w => (w.display_status || w.status) === activeTab.value)
 })
-
-function withToken(url: string | null | undefined) {
-  if (!url) return ''
-  const sep = url.includes('?') ? '&' : '?'
-  return `${url}${sep}token=${encodeURIComponent(userStore.token)}`
-}
 
 function getStatusText(status: string) {
   const map: Record<string, string> = {
@@ -255,15 +252,26 @@ function formatDate(dateStr: string) {
 function viewWork(work: ContentProject) {
   const status = work.display_status || work.status
   if (status === 'plan_ready') {
-    // 方案已完成的作品，点卡片直接开始生成视频
-    router.push(`/result?project_id=${work.id}&action=generate`)
+    // 只出了方案、还没成片的作品：直接带去创作页，用「照片 + 场景」生成。
+    // 原来跳的是老结果页的自动生成（compose → 渲染），那条链路依赖实拍
+    // 素材、实测走不通，已经整体下线。
+    goCreateVideo(work)
   } else {
     router.push(`/result?project_id=${work.id}`)
   }
 }
 
 function goGenerate(work: ContentProject) {
-  router.push(`/result?project_id=${work.id}&action=generate`)
+  goCreateVideo(work)
+}
+
+/**
+ * 去创作页生成视频：把选题一起带过去，用户点一下就能接着往下走，
+ * 不用在创作页重新输一遍主题。
+ */
+function goCreateVideo(work: ContentProject) {
+  const topic = (work.topic || '').trim()
+  router.push({ path: '/creation', query: topic ? { topic } : {} })
 }
 
 async function handleDelete(work: ContentProject) {
@@ -293,6 +301,21 @@ async function loadWorks() {
   try {
     const res = await getProjects(1, 50)
     works.value = res.items || []
+    const covers: Record<number, string> = {}
+    const videos: Record<number, string> = {}
+    const paths = works.value.flatMap((w: any) => {
+      const list: string[] = []
+      if (w.cover_url) list.push(String(w.cover_url).replace(/^\/static\//, ''))
+      if (w.video_url) list.push(String(w.video_url).replace(/^\/static\//, ''))
+      return list
+    })
+    const map = await resolveMediaUrls(paths)
+    works.value.forEach((w: any) => {
+      if (w.cover_url) covers[w.id] = map[String(w.cover_url).replace(/^\/static\//, '')] || ''
+      if (w.video_url) videos[w.id] = map[String(w.video_url).replace(/^\/static\//, '')] || ''
+    })
+    coverSrcMap.value = covers
+    videoSrcMap.value = videos
   } catch (e) {
     console.error('加载作品失败:', e)
   }

@@ -104,3 +104,51 @@ export function getSuggestShots() {
 export function restoreDemoFootages() {
   return request.post<unknown, { restored_count: number }>('/footage/restore-demo')
 }
+
+
+/** 上传 H3 图生视频的主播照片，返回 person_image 路径 */
+export function uploadAnchorPortrait(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post<unknown, { person_image: string; url: string; filename: string }>(
+    '/footage/anchor-portrait', formData,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 },
+  )
+}
+
+export interface AnchorPortrait {
+  filename: string
+  person_image: string
+  url: string
+}
+
+export function listAnchorPortraits() {
+  return request.get<unknown, { items: AnchorPortrait[] }>('/footage/anchor-portraits')
+}
+
+export function deleteAnchorPortrait(filename: string) {
+  return request.delete<unknown, { success: boolean }>(`/footage/anchor-portraits/${filename}`)
+}
+
+export interface AnchorScene {
+  filename: string
+  scene_image: string
+  url: string
+}
+
+export function uploadAnchorScene(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post<unknown, { scene_image: string; url: string; filename: string }>(
+    '/footage/anchor-scenes', formData,
+    { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 },
+  )
+}
+
+export function listAnchorScenes() {
+  return request.get<unknown, { items: AnchorScene[] }>('/footage/anchor-scenes')
+}
+
+export function deleteAnchorScene(filename: string) {
+  return request.delete<unknown, { success: boolean }>(`/footage/anchor-scenes/${filename}`)
+}

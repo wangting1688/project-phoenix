@@ -84,17 +84,17 @@
           type="primary"
           class="submit-btn"
           :loading="submitting"
-          :disabled="profiles.length >= 1"
+          :disabled="profiles.length >= MAX_VOICES"
           @click="handleSubmit"
         >
-          {{ profiles.length >= 1 ? '已达上限（最多 1 个）' : '提交训练' }}
+          {{ profiles.length >= MAX_VOICES ? `已达上限（最多 ${MAX_VOICES} 个）` : '保存并克隆' }}
         </el-button>
-        <div class="submit-tip">训练约需 10 秒，完成后即可用于视频配音</div>
+        <div class="submit-tip">已保存 {{ profiles.length }} / {{ MAX_VOICES }} 个；本地克隆稍等片刻，完成后即可用于视频配音</div>
       </div>
 
       <div class="switch-view">
         <el-button link @click="showList = true">
-          查看我的声音（{{ profiles.length }}）
+          查看我的声音（{{ profiles.length }} / {{ MAX_VOICES }}）
         </el-button>
       </div>
     </div>
@@ -126,8 +126,8 @@
           <el-button size="small" :loading="testingId === p.id" @click="handleTest(p)">试听</el-button>
           <el-button size="small" type="danger" plain @click="handleDelete(p)">删除</el-button>
         </div>
-        <audio v-if="demoUrls[p.id]" :src="addTokenToUrl(demoUrls[p.id])" controls class="voice-audio" />
-        <audio v-else-if="p.status === 'active' && p.demo_audio_url" :src="addTokenToUrl(p.demo_audio_url)" controls class="voice-audio" />
+        <audio v-if="demoSignedMap[p.id]" :src="demoSignedMap[p.id]" controls class="voice-audio" />
+        <audio v-else-if="p.status === 'active' && p.demo_audio_url" :src="demoSignedMap[p.id]" controls class="voice-audio" />
       </div>
 
       <div class="switch-view">
@@ -152,9 +152,11 @@ import {
   type VoiceProfile,
   type SampleScript,
 } from '@/api/voiceProfile'
+import { signedMediaUrl, resolveMediaUrls, storagePathOf } from '@/utils/mediaUrl'
 
 const userStore = useUserStore()
 const profiles = ref<VoiceProfile[]>([])
+const MAX_VOICES = 3
 const scripts = ref<SampleScript[]>([])
 const currentScript = ref<SampleScript | null>(null)
 const showList = ref(false)
@@ -169,6 +171,7 @@ const submitting = ref(false)
 const trainingId = ref<number | null>(null)
 const testingId = ref<number | null>(null)
 const demoUrls = reactive<Record<number, string>>({})
+const demoSignedMap = ref<Record<number, string>>({})
 
 let mediaRecorder: MediaRecorder | null = null
 let mediaStream: MediaStream | null = null
@@ -184,7 +187,7 @@ function formatSec(s: number) {
 }
 
 function statusLabel(s: string) {
-  return ({ training: '训练中', active: '可用', failed: '失败' } as Record<string, string>)[s] || s
+  return ({ training: '克隆中', active: '可用', failed: '失败' } as Record<string, string>)[s] || s
 }
 
 function statusType(s: string): 'success' | 'warning' | 'danger' | 'info' {
@@ -288,16 +291,18 @@ function blobExt(blob: Blob) {
   return 'webm'
 }
 
-function addTokenToUrl(url: string) {
-  if (!url) return ''
-  const sep = url.includes('?') ? '&' : '?'
-  return `${url}${sep}token=${encodeURIComponent(userStore.token)}`
-}
-
 async function loadProfiles() {
   try {
     const res = await getVoiceProfiles()
     profiles.value = res || []
+    const paths = profiles.value
+      .map((p) => (p as any).demo_audio_url?.replace(/^\/static\//, ''))
+      .filter(Boolean) as string[]
+    const map = await resolveMediaUrls(paths)
+    profiles.value.forEach((p) => {
+      const raw = (p as any).demo_audio_url
+      if (raw) demoSignedMap.value[p.id] = map[raw.replace(/^\/static\//, '')] || ''
+    })
   } catch {
     profiles.value = []
   }
@@ -333,11 +338,11 @@ async function handleSubmit() {
     const res = await uploadVoiceSample(fd)
     const p = res
     if (p.status === 'active') {
-      ElMessage.success('训练成功！现在可以用你的声音配音了')
+      ElMessage.success('克隆成功！现在可以用你的声音配音了')
     } else if (p.status === 'failed') {
-      ElMessage.error(p.error_message || '训练失败，请重新录制')
+      ElMessage.error(p.error_message || '克隆失败，请重新录制')
     } else {
-      ElMessage.info('已提交，训练中...')
+      ElMessage.info('已提交，克隆中...')
     }
     await loadProfiles()
     resetRecord()
@@ -355,9 +360,9 @@ async function handleTrain(p: VoiceProfile) {
   try {
     await trainVoiceProfile(p.id)
     await loadProfiles()
-    ElMessage.success('已重新提交训练')
+    ElMessage.success('已重新提交克隆')
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '训练失败')
+    ElMessage.error(e?.response?.data?.detail || '克隆失败')
   } finally {
     trainingId.value = null
   }
@@ -368,6 +373,7 @@ async function handleTest(p: VoiceProfile) {
   try {
     const res = await testVoiceProfile(p.id, '你好，这是我的声音，很高兴认识你。')
     demoUrls[p.id] = `${res.audio_url}?t=${Date.now()}`
+    demoSignedMap.value[p.id] = await signedMediaUrl(storagePathOf(res.audio_url))
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.detail || '试听失败')
   } finally {

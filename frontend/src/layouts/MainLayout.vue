@@ -28,6 +28,7 @@ import {
   IVideoCamera,
   IPicture,
   IFiles,
+  IUser,
 } from '@/utils/icons'
 
 const route = useRoute()
@@ -35,8 +36,11 @@ const router = useRouter()
 
 const tabs = [
   { path: '/creation', label: '创建视频', icon: IVideoCamera },
-  { path: '/footage', label: '我的素材', icon: IPicture },
+  // 「我的素材」原指实拍视频素材库（footage），那条链路已下线，
+  // 现在指向真正在用的「人物 / 场景素材库」——主播照片与讲解场景都存这里
+  { path: '/h3-library', label: '人物素材', icon: IPicture },
   { path: '/works', label: '我的作品', icon: IFiles },
+  { path: '/profile', label: '我的', icon: IUser },
 ]
 
 const activeTab = computed(() => {

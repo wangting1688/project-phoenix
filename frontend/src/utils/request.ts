@@ -24,6 +24,9 @@ request.interceptors.request.use(
 request.interceptors.response.use(
   (response) => {
     const res = response.data
+    // 业务错误默认弹全局提示；调用方需要自己引导（如缺素材要跳上传页）时，
+    // 可在请求配置里传 skipErrorToast: true，避免出现"红字 + 引导弹窗"双重提示。
+    const skipToast = (response.config as any)?.skipErrorToast === true
     // 后端存在两种响应格式, 统一在此解包为业务数据:
     //   1) ApiResponse: { code: number, message: string, data: any }
     //   2) 部分模块:    { success: boolean, data: any, message?: string }
@@ -37,8 +40,14 @@ request.interceptors.response.use(
       if (res.code === 200) {
         return res.data
       }
-      ElMessage.error(res.message || '请求失败')
-      return Promise.reject(new Error(res.message || '请求失败'))
+      // 把业务码与 data 挂到 error 上：调用方需要靠 data 里的标记做分支
+      // （例如 compose 缺素材时后端返回 data.need_footage = true）
+      const bizErr = new Error(res.message || '请求失败') as any
+      bizErr.code = res.code
+      bizErr.data = res.data
+      bizErr.apiMessage = res.message
+      if (!skipToast) ElMessage.error(res.message || '请求失败')
+      return Promise.reject(bizErr)
     }
     if (
       res &&
@@ -49,8 +58,10 @@ request.interceptors.response.use(
       if (res.success) {
         return res.data
       }
-      ElMessage.error(res.message || res.detail || '请求失败')
-      return Promise.reject(new Error(res.message || res.detail || '请求失败'))
+      const bizErr = new Error(res.message || res.detail || '请求失败') as any
+      bizErr.data = res.data
+      if (!skipToast) ElMessage.error(res.message || res.detail || '请求失败')
+      return Promise.reject(bizErr)
     }
     // 无包装结构 (如直接返回数组/字符串) 原样透传
     return res

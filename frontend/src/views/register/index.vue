@@ -7,7 +7,7 @@
       </div>
 
       <el-form
-        ref="registerForm"
+        ref="registerFormRef"
         :model="registerForm"
         :rules="registerRules"
         class="register-form"
@@ -126,6 +126,7 @@ async function handleRegister() {
     router.push('/home')
   } catch (error) {
     console.error('注册失败:', error)
+    ElMessage.error((error as any)?.response?.data?.detail || '注册失败，请重试')
   } finally {
     loading.value = false
   }

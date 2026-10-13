@@ -86,52 +86,21 @@
           </div>
         </div>
 
-        <!-- 创作工具: AI 辅助能力 -->
+        <!-- 工具统一收敛到 AI 工作台，核心链路保持在首页 -->
         <div class="menu-card card">
-          <div class="menu-item" @click="$router.push('/asset-library')">
+          <div class="menu-item" @click="$router.push('/workbench')">
             <div class="menu-left">
-              <el-icon :size="20" class="menu-icon purple"><IPicture /></el-icon>
-              <span>素材库</span>
+              <el-icon :size="20" class="menu-icon purple"><ISetting /></el-icon>
+              <span>AI 工作台</span>
             </div>
             <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
           </div>
           <div class="menu-divider"></div>
-          <div class="menu-item" @click="$router.push('/asset-collection')">
+          <div class="menu-item" @click="$router.push('/notifications')">
             <div class="menu-left">
-              <el-icon :size="20" class="menu-icon blue"><IVideoCamera /></el-icon>
-              <span>素材采集建议</span>
-            </div>
-            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
-          </div>
-          <div class="menu-divider"></div>
-          <div class="menu-item" @click="$router.push('/shooting-assistant')">
-            <div class="menu-left">
-              <el-icon :size="20" class="menu-icon orange"><ISparkles /></el-icon>
-              <span>拍摄助手</span>
-            </div>
-            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
-          </div>
-          <div class="menu-divider"></div>
-          <div class="menu-item" @click="$router.push('/video-production')">
-            <div class="menu-left">
-              <el-icon :size="20" class="menu-icon green"><IScissors /></el-icon>
-              <span>视频生产</span>
-            </div>
-            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
-          </div>
-          <div class="menu-divider"></div>
-          <div class="menu-item" @click="$router.push('/video-director')">
-            <div class="menu-left">
-              <el-icon :size="20" class="menu-icon purple"><IVideoPlay /></el-icon>
-              <span>AI 导演</span>
-            </div>
-            <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
-          </div>
-          <div class="menu-divider"></div>
-          <div class="menu-item" @click="$router.push('/director-learning')">
-            <div class="menu-left">
-              <el-icon :size="20" class="menu-icon red"><IStar /></el-icon>
-              <span>导演学习记录</span>
+              <el-icon :size="20" class="menu-icon blue"><IDocument /></el-icon>
+              <span>通知中心</span>
+              <span v-if="unread > 0" class="menu-badge">{{ unread }}</span>
             </div>
             <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
           </div>
@@ -179,8 +148,10 @@ import {
   IScissors,
   IVideoPlay,
   IStar,
+  IDocument,
 } from '@/utils/icons'
 import { useUserStore } from '@/stores/user'
+import { getUnreadCount } from '@/api/notifications'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -192,11 +163,15 @@ const stats = ref({
   totalViews: 0,
   consultations: 0,
 })
+const unread = ref(0)
 
 onMounted(() => {
   if (!userStore.userInfo) {
     userStore.fetchUserInfo()
   }
+  getUnreadCount().then((res) => {
+    unread.value = res?.count || 0
+  }).catch(() => null)
 })
 
 function editProfile() {
@@ -318,6 +293,19 @@ async function handleLogout() {
 .menu-left {
   display: flex;
   align-items: center;
+}
+
+.menu-badge {
+  min-width: 18px;
+  height: 18px;
+  line-height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #f56c6c;
+  color: #fff;
+  font-size: 11px;
+  text-align: center;
+  margin-left: 6px;
 }
 
 .menu-icon {

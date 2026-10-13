@@ -43,6 +43,15 @@
           登录
         </el-button>
 
+        <div class="login-divider"><span>或</span></div>
+        <el-button
+          size="large"
+          class="wechat-btn"
+          @click="handleWechatLogin"
+        >
+          微信登录
+        </el-button>
+
         <div class="login-footer">
           <span class="register-link" @click="goRegister">
             没有账号？去注册
@@ -54,11 +63,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Iphone, ILock } from '@/utils/icons'
 import { useUserStore } from '@/stores/user'
+import { wechatConfig, wechatLoginUrl } from '@/api/auth'
 
 const router = useRouter()
 const route = useRoute()
@@ -82,6 +92,43 @@ const loginRules: FormRules = {
 
 const formRef = ref<FormInstance>()
 const loading = ref(false)
+const wechatEnabled = ref(false)
+
+onMounted(async () => {
+  const code = route.query.code
+  if (code) {
+    // 微信授权回调：用 code 换 token 后跳转
+    try {
+      await userStore.loginWithWechat(String(code))
+      ElMessage.success('登录成功')
+      const redirect = (route.query.redirect as string) || '/home'
+      router.replace(redirect)
+      return
+    } catch (e: any) {
+      ElMessage.error(e?.response?.data?.detail || '微信登录失败')
+    }
+  }
+  try {
+    const cfg = await wechatConfig()
+    wechatEnabled.value = !!cfg?.enabled
+  } catch {
+    wechatEnabled.value = false
+  }
+})
+
+async function handleWechatLogin() {
+  if (!wechatEnabled.value) {
+    ElMessage.warning('微信登录暂未开通，配置后即可使用')
+    return
+  }
+  try {
+    const redirectUri = `${window.location.origin}/login`
+    const res = await wechatLoginUrl(redirectUri)
+    if (res?.url) window.location.href = res.url
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '微信登录未配置')
+  }
+}
 
 async function handleLogin() {
   if (!formRef.value) return
@@ -94,6 +141,7 @@ async function handleLogin() {
     router.push(redirect)
   } catch (error) {
     console.error('登录失败:', error)
+    ElMessage.error((error as any)?.response?.data?.detail || '登录失败，请检查账号或密码')
   } finally {
     loading.value = false
   }
@@ -156,6 +204,37 @@ function goRegister() {
 .login-footer {
   text-align: center;
   margin-top: 20px;
+}
+
+.login-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 12px;
+  color: #909399;
+  font-size: 13px;
+}
+
+.login-divider::before,
+.login-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: #e4e7ed;
+}
+
+.wechat-btn {
+  width: 100%;
+  height: 48px;
+  font-size: 15px;
+  color: #07c160;
+  border-color: #07c160;
+}
+
+.wechat-btn:hover {
+  color: #fff;
+  background: #07c160;
+  border-color: #07c160;
 }
 
 .register-link {

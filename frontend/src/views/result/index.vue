@@ -70,6 +70,14 @@
             placeholder="编辑文案内容"
           />
           <div v-else class="script-content">{{ scripts[activeScript].content }}</div>
+          <div v-if="scripts[activeScript].meta?.emphasis?.length" class="emphasis-tags">
+            <span class="emphasis-label">重点词</span>
+            <span
+              v-for="w in scripts[activeScript].meta.emphasis"
+              :key="w"
+              class="emphasis-tag"
+            >{{ w }}</span>
+          </div>
           <div class="script-actions">
             <template v-if="editingScript === activeScript">
               <el-button size="small" @click="cancelEdit">取消</el-button>
@@ -84,8 +92,14 @@
               <el-button size="small" @click="startEdit(activeScript)">
                 <el-icon><IDocument /></el-icon> 编辑
               </el-button>
-              <el-button size="small" type="primary" @click="goGenerateVideo(scripts[activeScript].id)">
-                生成视频方案
+              <el-button size="small" type="primary" @click="goCreateVideo">
+                用照片生成视频
+              </el-button>
+              <el-button size="small" type="warning" :loading="reReviewing" @click="reReviewCurrentScript">
+                编辑后重新审核
+              </el-button>
+              <el-button size="small" type="success" plain :loading="markingHot" @click="markHot">
+                标记爆款
               </el-button>
             </template>
           </div>
@@ -95,10 +109,10 @@
       <!-- 视频展示 -->
       <div v-if="video || composition || composing || rendering || renderedVideo" class="section">
         <div class="section-header">
-          <h3>素材片段预览 <el-tag size="small" type="info" effect="plain">demo 阶段</el-tag></h3>
+          <h3>最终成片 <el-tag v-if="!renderedVideo" size="small" type="info" effect="plain">demo 阶段</el-tag></h3>
         </div>
         <el-alert
-          v-if="!renderedVideo"
+          v-if="!renderedVideo && composition"
           type="info"
           :closable="false"
           show-icon
@@ -111,16 +125,24 @@
             <video
               v-if="renderedSrc"
               :src="renderedSrc"
+              :poster="coverSrc || undefined"
               controls
               preload="metadata"
+              playsinline
+              webkit-playsinline
+              x5-playsinline
               class="preview-video"
               @error="videoError = true"
             ></video>
             <video
               v-else-if="previewSrc && !videoError"
               :src="previewSrc"
+              :poster="coverSrc || undefined"
               controls
               preload="metadata"
+              playsinline
+              webkit-playsinline
+              x5-playsinline
               class="preview-video"
               @error="videoError = true"
             ></video>
@@ -140,7 +162,7 @@
           </div>
 
           <!-- 视频合成方案 -->
-          <div v-if="composition" class="composition-info">
+          <div v-if="composition && !renderedVideo" class="composition-info">
             <div class="info-row">
               <span class="label">时长</span>
               <span class="value">{{ composition.plan.total_duration }}秒</span>
@@ -221,41 +243,35 @@
             </details>
           </div>
 
-          <div class="video-actions">
-            <el-button type="primary" :loading="composing" @click="goGenerateVideo">
-              {{ composition ? '重新生成方案' : '生成视频方案' }}
-            </el-button>
-            <el-select
-              v-model="selectedVoiceId"
-              placeholder="系统配音"
-              clearable
-              size="default"
-              class="voice-select"
-            >
-              <el-option label="系统配音" :value="null" />
-              <el-option
-                v-for="v in activeVoices"
-                :key="v.id"
-                :label="`🎙️ ${v.name}`"
-                :value="v.id"
-              />
-            </el-select>
-            <el-button
-              type="success"
-              :loading="rendering"
-              :disabled="!composition"
-              @click="goRenderVideo"
-            >
-              {{ renderedVideo ? '重新渲染' : '渲染最终视频' }}
-            </el-button>
-            <el-button
-              type="primary"
-              :disabled="!renderedVideo"
-              @click="downloadVideo"
-            >
-              下载视频
-            </el-button>
+          <div v-if="!renderedVideo" class="video-actions retire-actions">
+            <p class="retire-hint">
+              本版本用「主播照片 + 讲解场景」直接生成讲解视频，不再需要实拍素材，
+              请到创作页完成。
+            </p>
+            <el-button type="primary" @click="goCreateVideo">去创作页生成视频</el-button>
+          </div>          <div v-else class="video-actions">
+            <el-button type="primary" @click="downloadVideo">下载视频</el-button>
+            <el-button type="success" plain @click="shareVideo">分享</el-button>
+            <el-button plain @click="copyShareText">复制发布文案</el-button>
           </div>
+        </div>
+      </div>
+
+      <!-- 还没有成片时的出口。
+           以前这种项目整块「最终成片」都不渲染 —— 因为 v-if 里没有任何
+           可展示对象 —— 用户打开结果页只看到文案，找不到任何"怎么生成视频"
+           的入口（线上反馈「点了没反应 / 请提交素材但没有入口」就是这么来的）。
+           旧的 compose→渲染 链路已下线，这里统一给出可点的去向。 -->
+      <div v-else-if="projectId && !renderedVideo" class="section">
+        <div class="section-header">
+          <h3>最终成片</h3>
+        </div>
+        <div class="video-card card retire-actions">
+          <p class="retire-hint">
+            这个项目还没有视频。本版本用「主播照片 + 讲解场景」直接生成讲解视频，
+            不再需要实拍素材，请到创作页完成。
+          </p>
+          <el-button type="primary" @click="goCreateVideo">去创作页生成视频</el-button>
         </div>
       </div>
 
@@ -296,18 +312,21 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   ILoading, ICopyDocument, IVideoCamera,
   ICheck, IDocument, IVideoPlay, ISetting,
 } from '@/utils/icons'
 import {
   getTaskStatus, getTaskResult, getTaskScripts, getProject, getProjectScripts,
+  reReviewScript,
+  markScriptHot,
   type TaskStatus, type Script, type VideoInfo, type ContentProject,
 } from '@/api/creation'
 import { composeVideo, renderVideo, type ComposeResult } from '@/api/video'
 import { getVoiceProfiles, type VoiceProfile } from '@/api/voiceProfile'
 import { useUserStore } from '@/stores/user'
+import { resolveMediaUrls, storagePathOf } from '@/utils/mediaUrl'
 
 const route = useRoute()
 const router = useRouter()
@@ -328,25 +347,43 @@ const voiceProfiles = ref<VoiceProfile[]>([])
 const selectedVoiceId = ref<number | null>(null)
 const activeVoices = computed(() => voiceProfiles.value.filter((v) => v.status === 'active'))
 const renderedVideo = ref<{ video_id: number; output_url: string; duration: number } | null>(null)
-const renderedSrc = computed(() => {
-  if (!renderedVideo.value) return null
-  const url = renderedVideo.value.output_url
-  const base = url.startsWith('/static/') ? url : `/static/output/${url.split('/').pop()}`
-  return `${base}?token=${encodeURIComponent(userStore.token)}`
-})
+const renderedSrc = ref<string | null>(null)
+const coverSrc = ref<string | null>(null)
 const composing = ref(false)
 const editingScript = ref<number | null>(null)
 
-const previewSrc = computed(() => {
-  if (!composition.value) return null
-  const scene = composition.value.plan?.scene_plan?.[0]
-  if (!scene?.footage_path) return null
-  const m = scene.footage_path.match(/footage\/(\d+)\/([^/]+)$/)
-  if (!m) return null
-  return `/static/footage/${m[1]}/${m[2]}?token=${encodeURIComponent(userStore.token)}`
-})
+const previewSrc = ref<string | null>(null)
+
+async function refreshMediaUrls() {
+  const paths: string[] = []
+  if (renderedVideo.value?.output_url) {
+    paths.push(storagePathOf(renderedVideo.value.output_url))
+  }
+  if (video.value?.cover_url) {
+    paths.push(storagePathOf(video.value.cover_url))
+  }
+  let footagePath = ''
+  const scene = composition.value?.plan?.scene_plan?.[0]
+  if (scene?.footage_path) {
+    const m = scene.footage_path.match(/footage\/(\d+)\/([^/]+)$/)
+    if (m) {
+      footagePath = `footage/${m[1]}/${m[2]}`
+      paths.push(footagePath)
+    }
+  }
+  const map = await resolveMediaUrls(paths)
+  renderedSrc.value = renderedVideo.value?.output_url
+    ? map[storagePathOf(renderedVideo.value.output_url)] || null
+    : null
+  coverSrc.value = video.value?.cover_url
+    ? map[storagePathOf(video.value.cover_url)] || null
+    : null
+  previewSrc.value = footagePath ? map[footagePath] || null : null
+}
 const editContent = ref('')
 const savingScript = ref(false)
+const reReviewing = ref(false)
+const markingHot = ref(false)
 const operationData = ref<any>({
   titles: [], hashtags: [], comment_strategy: [], private_message_guide: '',
 })
@@ -362,8 +399,7 @@ const qualityLabels: Record<string, string> = {
 let pollTimer: number | null = null
 
 const workflowSteps = [
-  { key: 'analyzing', label: '内容分析', icon: IDocument },
-  { key: 'planning', label: '内容策划', icon: ISetting },
+  { key: 'analyzing', label: '分析与策划', icon: IDocument },
   { key: 'scripting', label: '文案生成', icon: IDocument },
   { key: 'reviewing', label: '合规审核', icon: ICheck },
   { key: 'generating_video', label: '视频生成', icon: IVideoPlay },
@@ -410,24 +446,18 @@ onMounted(async () => {
           duration: proj.video_duration,
           status: (proj as any).video_status || 'rendered',
         }
+        await refreshMediaUrls()
       }
       // 加载文案脚本
       try {
         const scriptList = await getProjectScripts(projectIdQuery)
         scripts.value = scriptList || []
-        // 脚本加载完成后，如果是 action=generate 且视频还没渲染，自动生成
-        console.log('[result] action generate check:', {
-          action: route.query.action,
-          scriptCount: scripts.value.length,
-          hasRenderedVideo: !!renderedVideo.value,
-        })
-        if (
-          route.query.action === 'generate' &&
-          scripts.value.length > 0 &&
-          !renderedVideo.value
-        ) {
-          console.log('[result] 触发自动生成')
-          autoGenerateAndRender(scripts.value[0].id)
+        // 作品页「生成视频」带 ?action=generate 跳进来。旧的 compose → 渲染
+        // 链路已下线，这里统一引导到创作页（照片 + 场景图生视频），
+        // 并带上选题，用户点一下就能接着做。
+        if (route.query.action === 'generate' && !renderedVideo.value) {
+          goCreateVideo()
+          return
         }
       } catch {
         scripts.value = []
@@ -455,6 +485,10 @@ onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
 })
 
+function pollDelayMs(): number {
+  return document.visibilityState === 'hidden' ? 30000 : 5000
+}
+
 async function pollStatus() {
   try {
     const status = await getTaskStatus(taskId)
@@ -465,6 +499,7 @@ async function pollStatus() {
       scripts.value = (result as any).scripts || []
       video.value = (result as any).video || null
       projectId.value = (result as any).project_id || null
+      await refreshMediaUrls()
     }
 
     if (status?.status === 'completed') {
@@ -476,9 +511,10 @@ async function pollStatus() {
       return
     }
 
-    pollTimer = window.setTimeout(pollStatus, 2000)
+    pollTimer = window.setTimeout(pollStatus, pollDelayMs())
   } catch (e) {
     console.error('轮询失败', e)
+    pollTimer = window.setTimeout(pollStatus, pollDelayMs())
   }
 }
 
@@ -554,6 +590,41 @@ async function saveScript() {
   }
 }
 
+async function reReviewCurrentScript() {
+  const s = scripts.value[activeScript.value]
+  if (!s || !projectId.value) return
+  reReviewing.value = true
+  try {
+    const res = await reReviewScript(projectId.value, s.id, s.content)
+    ElMessage.success('审核通过，可以继续生成视频')
+    // 刷新任务/项目状态，让页面退出 failed 态
+    try {
+      const proj = await getProject(projectId.value)
+      project.value = proj
+      taskStatus.value = { status: 'completed', progress: 100, error_message: null } as any
+    } catch {}
+  } catch (e: any) {
+    ElMessage.error(extractApiError(e))
+  } finally {
+    reReviewing.value = false
+  }
+}
+
+async function markHot() {
+  const s = scripts.value[activeScript.value]
+  if (!s) return
+  markingHot.value = true
+  try {
+    await markScriptHot(s.id)
+    s.meta = { ...(s.meta || {}), is_hot: true }
+    ElMessage.success('已标记为爆款，后续生成会参考它')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '标记失败')
+  } finally {
+    markingHot.value = false
+  }
+}
+
 function copyScript(content: string) {
   navigator.clipboard.writeText(content).then(() => {
     ElMessage.success('已复制到剪贴板')
@@ -571,23 +642,26 @@ function extractApiError(err: any): string {
   return err?.response?.data?.message || err?.message || '生成失败'
 }
 
-function goGenerateVideo(scriptId?: number) {
-  if (!projectId.value || projectId.value <= 0) {
-    ElMessage.error('项目ID未加载，请稍候再试')
-    return
-  }
-  composing.value = true
-  composeVideo(projectId.value, scriptId)
-    .then((res: any) => {
-      composition.value = res as ComposeResult
-      ElMessage.success(`视频方案已生成，质量评分 ${res.quality.total}`)
-    })
-    .catch((err: any) => {
-      ElMessage.error(extractApiError(err))
-    })
-    .finally(() => {
-      composing.value = false
-    })
+/**
+ * 生成视频的唯一入口改到创作页（照片 + 场景图生视频）。
+ *
+ * 这里原来挂的是「生成视频方案（compose）→ 渲染」这条旧链路：它依赖
+ * 视频素材库里的实拍片段，实测一直走不通——点下去只会弹「请先上传素材」，
+ * 而素材库里的分类区又是空的，用户根本找不到上传入口，卡死在结果页。
+ * 那条链路已整体下线，所以这里只做跳转，把选题带过去避免重填。
+ */
+function goCreateVideo() {
+  const topic = (project.value as any)?.topic || ''
+  const q: Record<string, string> = {}
+  if (topic) q.topic = String(topic).slice(0, 100)
+  router.push({ path: '/creation', query: q })
+}
+
+async function autoGenerateAndRender(_scriptId?: number) {
+  // 旧的「一键生成」（compose → 渲染）已下线，这里保留一个转发实现，
+  // 兜住可能残留的历史调用点：直接引导到创作页。
+  ElMessage.info('请到创作页用「主播照片 + 讲解场景」生成视频')
+  goCreateVideo()
 }
 
 function getQualityColor(score: number) {
@@ -611,61 +685,32 @@ function downloadVideo() {
   ElMessage.success('已开始下载，可保存后上传到抖音/视频号等平台')
 }
 
-function goRenderVideo() {
-  if (!composition.value) {
-    ElMessage.warning('请先生成视频方案')
-    return
+async function copyShareText() {
+  const topic = project.value?.topic || 'AI 短视频'
+  const text = `【${topic}】\n${window.location.href}\n刚用 AI 生成的短视频，欢迎看看～`
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制发布文案')
+  } catch {
+    ElMessage.warning('复制失败，请长按链接手动复制')
   }
-  if (!projectId.value || projectId.value <= 0) {
-    ElMessage.error('项目ID未加载，请稍候再试')
-    return
-  }
-  rendering.value = true
-  // 把 plan + 当前选中脚本文本透传给后端 (后端会烧字幕 + TTS 配音)
-  const scriptText = scripts.value[activeScript.value]?.content || ""
-  renderVideo(projectId.value, composition.value.plan, scriptText, true, selectedVoiceId.value ?? undefined)
-    .then((res: any) => {
-      renderedVideo.value = res
-      ElMessage.success(`最终视频已生成 (${res.duration}s)`)
-    })
-    .catch((err: any) => {
-      ElMessage.error(extractApiError(err))
-    })
-    .finally(() => {
-      rendering.value = false
-    })
 }
 
-async function autoGenerateAndRender(scriptId?: number) {
-  /**
-   * 一键生成：自动生成视频方案 → 自动渲染最终视频
-   * 从作品页「生成视频」按钮跳过来时触发
-   */
-  console.log('[autoGenerateAndRender] 开始执行, projectId=', projectId.value, 'scriptId=', scriptId)
-  if (!projectId.value || projectId.value <= 0) return
-  composing.value = true
-  try {
-    const res: any = await composeVideo(projectId.value, scriptId)
-    composition.value = res as ComposeResult
-    ElMessage.success(`视频方案已生成，开始渲染...`)
-    // 直接开始渲染
-    rendering.value = true
-    const scriptText = scripts.value[activeScript.value]?.content || ''
-    const renderRes: any = await renderVideo(
-      projectId.value,
-      composition.value.plan,
-      scriptText,
-      true,
-      selectedVoiceId.value ?? undefined,
-    )
-    renderedVideo.value = renderRes
-    ElMessage.success(`最终视频已生成 (${renderRes.duration}s)`)
-  } catch (err: any) {
-    ElMessage.error(extractApiError(err))
-  } finally {
-    composing.value = false
-    rendering.value = false
+async function shareVideo() {
+  const nav = navigator as any
+  if (nav.share) {
+    try {
+      await nav.share({
+        title: project.value?.topic || 'AI 短视频',
+        text: `刚用 AI 生成的短视频：${project.value?.topic || ''}`,
+        url: window.location.href,
+      })
+    } catch {
+      /* 用户取消分享不提示 */
+    }
+    return
   }
+  await copyShareText()
 }
 
 </script>
@@ -736,6 +781,12 @@ async function autoGenerateAndRender(scriptId?: number) {
   white-space: pre-wrap; margin-bottom: 16px;
 }
 .script-actions { display: flex; gap: 10px; }
+.emphasis-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; align-items: center; }
+.emphasis-label { color: #909399; font-size: 13px; }
+.emphasis-tag {
+  background: #f0f2ff; color: #4f46e5; border: 1px solid #c7d2fe;
+  border-radius: 6px; padding: 2px 10px; font-size: 13px;
+}
 
 .voice-select { width: 150px; margin-right: 8px; }
 .video-card { text-align: center; padding: 30px; }
@@ -755,6 +806,11 @@ async function autoGenerateAndRender(scriptId?: number) {
 }
 .video-placeholder span { display: block; margin-top: 8px; font-size: 14px; }
 .video-actions { display: flex; gap: 10px; justify-content: center; }
+/* 视频生成入口已迁到创作页，这里给出说明 + 可点的跳转，不再放被禁用的按钮 */
+.retire-actions { flex-direction: column; align-items: center; gap: 12px; }
+.retire-hint {
+  margin: 0; color: #909399; font-size: 13px; line-height: 1.6; text-align: center;
+}
 
 /* 视频合成方案展示 */
 .composition-info {

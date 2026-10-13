@@ -19,3 +19,19 @@ export function register(phone: string, password: string, nickname?: string) {
 export function getCurrentUser() {
   return request.get<unknown, CurrentUserResponse>('/auth/me')
 }
+
+export function wechatConfig() {
+  return request.get<unknown, { enabled: boolean; app_id: string }>('/auth/wechat/config')
+}
+
+export function wechatLoginUrl(redirectUri: string) {
+  return request.get<unknown, { url: string }>('/auth/wechat/login-url', {
+    params: { redirect_uri: redirectUri },
+  })
+}
+
+export function wechatCallback(code: string) {
+  return request.get<unknown, LoginResponse>('/auth/wechat/callback', {
+    params: { code },
+  })
+}

@@ -70,16 +70,37 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '数据登记', requiresAuth: true },
       },
       {
+        // H3 人物/场景素材库（主播照片、讲解场景图）。导航「人物素材」指向这里。
+        path: 'h3-library',
+        name: 'H3Library',
+        component: () => import('@/views/h3Library/index.vue'),
+        meta: { title: '人物/场景素材库', requiresAuth: true },
+      },
+      {
+        // 旧的实拍视频素材库（footage + 口型同步链路）已整体下线：
+        // 该链路要求先传实拍视频再做口型，实测一直走不通，且会让「生成视频」
+        // 因缺素材直接报错。这里保留 path 做重定向，历史链接不会 404；
+        // 视图文件 views/footage/index.vue 与后端表结构保留，便于日后需要时恢复。
         path: 'footage',
-        name: 'Footage',
-        component: () => import('@/views/footage/index.vue'),
-        meta: { title: '素材库', requiresAuth: true },
+        redirect: '/h3-library',
       },
       {
         path: 'voice-profile',
         name: 'VoiceProfile',
         component: () => import('@/views/voiceProfile/index.vue'),
         meta: { title: '我的声音', requiresAuth: true },
+      },
+      {
+        path: 'workbench',
+        name: 'Workbench',
+        component: () => import('@/views/workbench/index.vue'),
+        meta: { title: 'AI工作台', requiresAuth: true },
+      },
+      {
+        path: 'notifications',
+        name: 'Notifications',
+        component: () => import('@/views/notifications/index.vue'),
+        meta: { title: '通知中心', requiresAuth: true },
       },
       {
         path: 'profile',

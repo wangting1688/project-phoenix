@@ -36,8 +36,7 @@
           </div>
 
           <p class="manual-hint">
-            平台未开放视频数据接口，需要你照抄视频信息，AI 才能拆解这条视频。<br />
-            标题必填；互动数据填得越全，拆解越准。
+            抖音链接会自动解析标题并转写口播文案；互动数据平台未开放接口，可选补填以提升拆解精度。
           </p>
 
           <div v-show="showManual" class="manual-form">
@@ -75,7 +74,7 @@
           <el-button
             type="primary"
             size="large"
-            :disabled="!videoUrl.trim() || !manual.title.trim()"
+            :disabled="!videoUrl.trim()"
             :loading="analyzing"
             @click="startAnalysis"
           >
@@ -143,7 +142,16 @@
           </div>
           <div class="info-item">
             <span class="label">时长</span>
-            <span class="value">{{ analysisResult.basic_info.duration }}秒</span>
+            <span class="value">
+              {{ analysisResult.basic_info.duration ? analysisResult.basic_info.duration + '秒' : '未获取' }}
+            </span>
+          </div>
+          <div class="info-item">
+            <span class="label">数据来源</span>
+            <el-tag v-if="analysisResult.basic_info.data_source === 'auto'" type="success" size="small">
+              自动解析
+            </el-tag>
+            <el-tag v-else type="info" size="small">手动填写</el-tag>
           </div>
         </div>
         <div class="stats-row">
@@ -163,6 +171,10 @@
             <span class="stat-value">{{ formatNumber(analysisResult.basic_info.collect_count) }}</span>
             <span class="stat-label">收藏</span>
           </div>
+        </div>
+        <div v-if="analysisResult.basic_info.transcript" class="transcript-block">
+          <span class="label">口播文案（自动转写）</span>
+          <p>{{ analysisResult.basic_info.transcript }}</p>
         </div>
       </div>
 
@@ -396,7 +408,8 @@ const analysisResult = ref<AnalysisResult | null>(null)
 const opportunityResult = ref<OpportunityResult | null>(null)
 const sessionId = ref(0)
 
-const formatNumber = (num: number) => {
+const formatNumber = (num: number | null | undefined) => {
+  if (num == null) return '未获取'
   if (num >= 10000) {
     return (num / 10000).toFixed(1) + '万'
   }
@@ -405,11 +418,6 @@ const formatNumber = (num: number) => {
 
 const startAnalysis = async () => {
   if (!videoUrl.value.trim()) return
-  if (!manual.value.title.trim()) {
-    showManual.value = true
-    ElMessage.warning('请先填写对标视频的标题，系统不会编造视频数据')
-    return
-  }
   
   step.value = 'analyzing'
   analyzing.value = true
@@ -417,7 +425,7 @@ const startAnalysis = async () => {
 
   try {
     // 1. 创建分析会话
-    analyzingStep.value = '正在创建分析任务...'
+    analyzingStep.value = '正在解析视频链接...'
     progressPercent.value = 10
 
     const createRes = await createAnalysis(videoUrl.value.trim(), buildVideoInfo())
@@ -427,10 +435,10 @@ const startAnalysis = async () => {
     sessionId.value = createRes.session_id
 
     // 2. 执行分析 (真实 AI 调用, 约 30-60s, 期间按阶段推进提示)
-    analyzingStep.value = 'AI正在分析视频内容...'
+    analyzingStep.value = '正在下载视频并转写口播文案...'
     progressPercent.value = 30
     const analyzePromise = analyzeVideo(sessionId.value)
-    pushTimer(() => { analyzingStep.value = '正在拆解内容结构...'; progressPercent.value = 50 }, 5000)
+    pushTimer(() => { analyzingStep.value = '正在拆解内容结构...'; progressPercent.value = 50 }, 8000)
     pushTimer(() => { analyzingStep.value = '正在分析爆点因素...'; progressPercent.value = 70 }, 15000)
     pushTimer(() => { analyzingStep.value = '正在计算匹配度...'; progressPercent.value = 90 }, 30000)
     const analyzeRes = await analyzePromise
@@ -443,7 +451,8 @@ const startAnalysis = async () => {
     }
   } catch (error: any) {
     console.error('Analysis failed:', error)
-    ElMessage.error(error?.message || '分析失败，请重试')
+    const detail = error?.response?.data?.detail
+    ElMessage.error(detail || error?.message || '分析失败，请重试')
     step.value = 'input'
   } finally {
     clearTimers()
@@ -785,6 +794,30 @@ const goBack = () => {
   justify-content: space-around;
   padding-top: 16px;
   border-top: 1px solid #f0f0f0;
+}
+
+.transcript-block {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: #f5f7ff;
+  border-radius: 10px;
+  border: 1px solid #e4e7ed;
+}
+
+.transcript-block .label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #667eea;
+  margin-bottom: 8px;
+}
+
+.transcript-block p {
+  font-size: 14px;
+  line-height: 1.8;
+  color: #303133;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .stat-item {

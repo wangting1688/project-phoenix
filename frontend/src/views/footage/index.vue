@@ -12,6 +12,7 @@
           drag
           :show-file-list="false"
           :http-request="handleUpload"
+          :before-upload="beforeUpload"
           accept="video/*"
           :disabled="uploading"
         >
@@ -162,6 +163,7 @@ const uploading = ref(false)
 const uploadPercent = ref(0)
 const uploadName = ref('')
 const sourceFilter = ref<string>('all')
+const MAX_UPLOAD_MB = 200
 
 const filteredFootages = computed(() => {
   if (sourceFilter.value === 'all') return footages.value
@@ -170,6 +172,15 @@ const filteredFootages = computed(() => {
 
 function isDemoFootage(f: Footage) {
   return f.source_type === 'system_demo'
+}
+
+function beforeUpload(file: File) {
+  const mb = file.size / 1024 / 1024
+  if (mb > MAX_UPLOAD_MB) {
+    ElMessage.error(`视频超过 ${MAX_UPLOAD_MB}MB，请压缩后再上传`)
+    return false
+  }
+  return true
 }
 
 async function restoreDemo() {

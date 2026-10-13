@@ -41,11 +41,46 @@
               v-model="formData.topic"
               type="textarea"
               :rows="3"
-              placeholder="例如：肠胃不好怎么调理"
+              :placeholder="topicHint.placeholder"
               maxlength="100"
               show-word-limit
               size="large"
             />
+            <div class="persona-tags">
+              <span
+                v-for="t in topicHint.topics"
+                :key="t"
+                class="persona-tag"
+                :class="{ active: formData.topic === t }"
+                @click="formData.topic = t"
+              >{{ t }}</span>
+            </div>
+          </div>
+
+          <div class="form-item">
+            <label>目标平台</label>
+            <el-select v-model="formData.platform" size="large">
+              <el-option v-for="p in platformOptions" :key="p.value" :label="p.label" :value="p.value" />
+            </el-select>
+          </div>
+
+          <div class="form-item">
+            <label>主播人设（可选）</label>
+            <el-input
+              v-model="formData.persona"
+              placeholder="例如：温暖亲切的40+姐姐 / 专业营养师 / 幽默老铁"
+              maxlength="50"
+              size="large"
+            />
+            <div class="persona-tags">
+              <span
+                v-for="p in personaOptions"
+                :key="p"
+                class="persona-tag"
+                :class="{ active: personaList.includes(p) }"
+                @click="togglePersona(p)"
+              >{{ p }}</span>
+            </div>
           </div>
 
           <div class="form-item">
@@ -141,8 +176,13 @@
 
       <!-- Step 3: 选择声音 -->
       <div v-if="currentStep === 2" class="step-panel">
-        <h2 class="step-title">选择主播声音</h2>
-        <p class="step-desc">用克隆的声音来生成配音</p>
+        <div class="voice-step-header">
+          <div>
+            <h2 class="step-title">选择主播声音</h2>
+            <p class="step-desc">用克隆的声音来生成配音</p>
+          </div>
+          <el-button type="primary" plain @click="goToVoicePage">克隆新声音</el-button>
+        </div>
 
         <div v-if="loadingVoices" class="loading-state">
           <el-icon class="loading-icon" :size="32"><ILoading /></el-icon>
@@ -151,7 +191,7 @@
 
         <div v-else-if="voiceProfiles.length === 0" class="empty-voice">
           <el-empty description="还没有声音模型">
-            <el-button type="primary" @click="goToVoicePage">去训练声音</el-button>
+            <el-button type="primary" @click="goToVoicePage">去克隆声音</el-button>
           </el-empty>
         </div>
 
@@ -190,49 +230,52 @@
         </div>
       </div>
 
-      <!-- Step 4: 选择素材 -->
+      <!-- Step 4: 主播照片 + 场景（H3 图生视频） -->
       <div v-if="currentStep === 3" class="step-panel">
-        <h2 class="step-title">选择一段视频素材</h2>
-        <p class="step-desc">选择一段主播口播视频，AI 会自动对齐口型</p>
+        <h2 class="step-title">上传主播照片</h2>
+        <p class="step-desc">上传一张主播正面清晰照片，AI 将以照片为人像直接图生视频（脸和发型由照片锁定）</p>
 
-        <div v-if="loadingFootages" class="loading-state">
-          <el-icon class="loading-icon" :size="32"><ILoading /></el-icon>
-          <p>加载中...</p>
-        </div>
-
-        <div v-else-if="footages.length === 0" class="empty-state">
-          <el-icon :size="48"><IVideoCamera /></el-icon>
-          <p class="empty-title">你还没有视频素材</p>
-          <p class="empty-sub">请先上传一段主播口播视频，AI 会自动对齐口型</p>
-          <el-button type="primary" @click="goToFootagePage">去上传素材</el-button>
-        </div>
-
-        <div v-else class="footage-grid">
-          <div
-            v-for="f in footages"
-            :key="f.id"
-            class="footage-card"
-            :class="{ active: selectedFootageId === f.id }"
-            @click="selectedFootageId = f.id"
-          >
-            <div class="footage-cover">
-              <img v-if="f.thumbnail" :src="addTokenToUrl(f.thumbnail)" alt="" />
-              <div v-else class="footage-placeholder">
-                <el-icon :size="28"><IVideoCamera /></el-icon>
-              </div>
-              <span class="footage-duration">{{ formatDuration(f.duration) }}</span>
+        <el-upload
+          class="portrait-uploader"
+          :show-file-list="false"
+          :before-upload="() => false"
+          :on-change="handlePortraitChange"
+          accept="image/jpeg,image/png,image/webp"
+        >
+          <div class="portrait-box" :class="{ active: !!personImage }">
+            <img v-if="personPreview" :src="personPreview" alt="主播照片" class="portrait-img" />
+            <div v-else class="portrait-empty">
+              <el-icon :size="40"><IVideoCamera /></el-icon>
+              <p class="empty-title" style="margin-top:10px">点击上传主播照片</p>
+              <p class="empty-sub">正面、光线清晰的半身照，jpg / png</p>
             </div>
-            <div class="footage-name">{{ f.filename }}</div>
-            <div v-if="selectedFootageId === f.id" class="footage-check">
+            <div v-if="uploadingPortrait" class="portrait-mask">
+              <el-icon class="loading-icon" :size="28"><ILoading /></el-icon>
+            </div>
+          </div>
+        </el-upload>
+
+        <p class="library-link">
+          <el-button link type="primary" size="small" @click="goToH3Library">
+            从「人物 / 场景素材库」选已有照片与场景 →
+          </el-button>
+        </p>
+
+        <h3 class="scene-title">选择讲解场景</h3>
+        <div class="scene-grid">
+          <div
+            v-for="opt in sceneOptions"
+            :key="opt.value"
+            class="scene-card"
+            :class="{ active: selectedScene === opt.value }"
+            @click="selectedScene = opt.value"
+          >
+            <div class="scene-label">{{ opt.label }}</div>
+            <div class="scene-desc">{{ opt.desc }}</div>
+            <div v-if="selectedScene === opt.value" class="footage-check">
               <el-icon><ICheck /></el-icon>
             </div>
           </div>
-        </div>
-
-        <div v-if="footages.length > 0" class="upload-hint">
-          <el-button text type="primary" @click="goToFootagePage">
-            + 上传新素材
-          </el-button>
         </div>
       </div>
 
@@ -309,25 +352,14 @@
       >
         {{ currentStep === 3 ? '开始生成' : '下一步' }}
       </el-button>
-      <p
-        v-if="currentStep === 3 && !canNext && selectedFootageId === null"
-        class="footer-hint"
-      >
-        请先选择一段视频素材，再点击「开始生成」
-      </p>
-      <p
-        v-else-if="currentStep === 3 && !canNext"
-        class="footer-hint"
-      >
-        请先返回完成前序步骤（选题 / 文案 / 声音）
-      </p>
+      <p v-if="nextHint" class="footer-hint">{{ nextHint }}</p>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { queueHintText } from '@/utils/queue'
 import { ElMessage } from 'element-plus'
@@ -344,15 +376,17 @@ import {
 import { createProject, getProjectScripts, getTaskStatus, updateScript } from '@/api/creation'
 import { generateVideo } from '@/api/video'
 import { getVoiceProfiles, testVoiceProfile, type VoiceProfile } from '@/api/voiceProfile'
-import { listFootages, type Footage } from '@/api/footage'
+import { uploadAnchorPortrait } from '@/api/footage'
+import { signedMediaUrl, storagePathOf } from '@/utils/mediaUrl'
 
+const route = useRoute()
 const router = useRouter()
 
 const steps = [
   { key: 'topic', label: '选题' },
   { key: 'script', label: '文案' },
   { key: 'voice', label: '声音' },
-  { key: 'footage', label: '素材' },
+  { key: 'footage', label: '形象' },
   { key: 'generate', label: '生成' },
 ]
 
@@ -369,11 +403,50 @@ const goalOptions = [
   { value: 'engagement', label: '互动点赞', icon: '👍' },
   { value: 'conversion', label: '种草成交', icon: '🛒' },
 ]
+const platformOptions = [
+  { value: '抖音', label: '抖音' },
+  { value: '视频号', label: '视频号' },
+  { value: '小红书', label: '小红书' },
+  { value: '快手', label: '快手' },
+]
+const industryTopicHints: Record<string, { placeholder: string; topics: string[] }> = {
+  '健康养生': { placeholder: '例如：肠胃不好怎么调理、更年期失眠怎么改善', topics: ['肠胃不好怎么调理', '更年期失眠怎么改善', '湿气重怎么调理', '血脂高怎么降'] },
+  '美妆护肤': { placeholder: '例如：敏感肌怎么修护、30+精简护肤步骤', topics: ['敏感肌怎么修护', '30+精简护肤', '防晒到底怎么选', '秋冬皮肤干燥怎么办'] },
+  '美食餐饮': { placeholder: '例如：早餐怎么吃更健康、低脂家常菜做法', topics: ['早餐怎么吃更健康', '低脂家常菜做法', '外卖怎么点更健康', '养生汤怎么煲'] },
+  '教育培训': { placeholder: '例如：孩子专注力怎么练、英语启蒙怎么做', topics: ['孩子专注力怎么练', '英语启蒙怎么做', '家长如何高效辅导', '学习方法怎么选'] },
+  '生活情感': { placeholder: '例如：夫妻关系怎么经营、焦虑怎么缓解', topics: ['夫妻关系怎么经营', '焦虑怎么缓解', '独居生活怎么过', '情绪内耗怎么办'] },
+  '职场成长': { placeholder: '例如：职场晋升怎么准备、如何和领导沟通', topics: ['职场晋升怎么准备', '如何和领导沟通', '副业怎么选', '时间管理怎么做'] },
+  '母婴育儿': { placeholder: '例如：宝宝辅食怎么做、断夜奶怎么戒', topics: ['宝宝辅食怎么做', '断夜奶怎么戒', '哄睡技巧分享', '宝宝免疫力怎么养'] },
+  '家居生活': { placeholder: '例如：小户型收纳技巧、厨房清洁妙招', topics: ['小户型收纳技巧', '厨房清洁妙招', '绿植怎么养', '清洁收纳好物'] },
+  '其他': { placeholder: '例如：生活小妙招、实用技巧分享', topics: ['生活小妙招', '实用技巧分享', '日常经验总结', '新手入门指南'] },
+}
+const personaOptions = [
+  '温暖亲切的40+姐姐', '专业营养师', '中医养生顾问', '知心大姐',
+  '高知健康专家', '邻家阿姨', '元气活力姐姐', '职场女强人',
+  '宝妈营养师', '时尚健康博主', '严谨老干部', '懂生活的老闺蜜',
+  '治愈系声音主播', '靠谱生活顾问',
+]
 const formData = ref({
   industry: '健康养生',
   topic: '',
   goal: 'followers',
+  platform: '抖音',
+  persona: '',
 })
+const topicHint = computed(() => {
+  const h = industryTopicHints[formData.value.industry] || industryTopicHints['其他']
+  return h
+})
+const personaList = computed(() =>
+  formData.value.persona.split(/[、，,/\s]+/).filter(Boolean))
+
+function togglePersona(p: string) {
+  const current = personaList.value
+  const next = current.includes(p)
+    ? current.filter(x => x !== p)
+    : [...current, p]
+  formData.value.persona = next.join('、')
+}
 
 // ===== Step 2: 脚本 =====
 const scripts = ref<any[]>([])
@@ -419,12 +492,16 @@ async function saveEditScript(s: any) {
 }
 const generatingScripts = ref(false)
 const scriptWaitSeconds = ref(0)      // 文案生成已等待秒数
-const scriptTimeout = ref(false)      // 60s 仍无文案时为 true
+const scriptTimeout = ref(false)      // 5分钟仍无文案时为 true
 let projectId: number | null = null
 let scriptPollTimer: number | null = null
 let scriptWaitTimer: number | null = null
 const SCRIPT_POLL_INTERVAL = 3000     // 每 3 秒轮询一次
-const SCRIPT_MAX_WAIT = 60000         // 最长等待 60 秒
+const SCRIPT_MAX_WAIT = 300000        // 最长等待 5 分钟（云端文案多次调用较慢）
+
+function pollDelayMs(baseMs: number): number {
+  return document.visibilityState === 'hidden' ? baseMs * 5 : baseMs
+}
 
 function scriptTypeName(type: string) {
   const map: Record<string, string> = {
@@ -486,18 +563,28 @@ async function pollScripts() {
     }
   }, 1000)
 
-  // 立即查一次，之后每 3 秒轮询，直到文案出现
-  await check()
-  if (!done) {
-    scriptPollTimer = window.setInterval(check, SCRIPT_POLL_INTERVAL)
+  // 立即查一次，之后每 3 秒轮询；切到后台自动降频，直到文案出现
+  const schedule = async () => {
+    if (done) return
+    await check()
+    if (!done) {
+      scriptPollTimer = window.setTimeout(schedule, pollDelayMs(SCRIPT_POLL_INTERVAL))
+    }
   }
+  await schedule()
 }
 
 async function regenerateScripts() {
   // 同一主题重新创建项目并触发文案生成，再继续轮询
   stepLoading.value = true
   try {
-    const res = await createProject('custom', formData.value.topic, formData.value.industry)
+    const res = await createProject(
+      'custom',
+      formData.value.topic,
+      formData.value.industry,
+      formData.value.platform,
+      formData.value.persona,
+    )
     projectId = res.project_id
     scripts.value = []
     selectedScriptId.value = null
@@ -530,17 +617,14 @@ function voiceStatusText(status: string) {
 
 function selectVoice(v: VoiceProfile) {
   if (v.status !== 'active') {
-    ElMessage.warning('该声音模型还在训练中，请先等待训练完成')
+    if (v.status === 'failed') {
+      ElMessage.warning('该声音克隆失败，请重新录制后使用')
+    } else {
+      ElMessage.warning('该声音模型还在克隆中，请稍后刷新')
+    }
     return
   }
   selectedVoiceId.value = v.id
-}
-
-// 静态音频走后端 /static 且带 token 校验，必须拼上用户 token 才能播放
-function addTokenToUrl(url: string) {
-  if (!url) return ''
-  const sep = url.includes('?') ? '&' : '?'
-  return `${url}${sep}token=${encodeURIComponent(userStore.token)}`
 }
 
 function stopVoice() {
@@ -565,7 +649,7 @@ async function playVoice(v: VoiceProfile) {
   testingVoiceId.value = v.id
   try {
     const res = await testVoiceProfile(v.id, '你好，这是我的声音，很高兴认识你。')
-    audioEl = new Audio(addTokenToUrl(res.audio_url))
+    audioEl = new Audio(await signedMediaUrl(storagePathOf(res.audio_url)))
     audioEl.play().catch(() => {
       ElMessage.warning('试听播放被浏览器拦截，请再点一次')
     })
@@ -585,20 +669,68 @@ function goToVoicePage() {
   router.push('/voice-profile')
 }
 
-// ===== Step 4: 素材 =====
-const footages = ref<Footage[]>([])
-const selectedFootageId = ref<number | null>(null)
-const loadingFootages = ref(false)
+// ===== Step 4: 主播照片 + 场景（H3 图生视频）=====
+// 说明：视频素材（footage）链路已下线。那条链路要求先上传实拍视频再做口型同步，
+// 实测一直走不通，且「生成视频」按钮会因缺素材直接报错、用户找不到上传入口。
+// 现在唯一的成片链路是「照片 + 场景」图生视频，所以这里不再维护素材选择状态。
+const personImage = ref<string>('')
+const personPreview = ref<string>('')
+const uploadingPortrait = ref(false)
+const sceneOptions = [
+  { value: 'lecture', label: '会场讲课', desc: '讲台半身口播，专业稳重' },
+  { value: 'park_walk', label: '公园散步', desc: '边走边讲，轻松自然' },
+  { value: 'teahouse', label: '茶室座谈', desc: '茶室坐着讲，温暖亲切' },
+  { value: 'street_walk', label: '商业街', desc: '街头行走讲解，有活力' },
+  { value: 'kitchen', label: '厨房演示', desc: '居家厨房场景，生活化演示' },
+  { value: 'office', label: '办公室', desc: '办公桌旁专业讲解' },
+  { value: 'living_room', label: '客厅居家', desc: '沙发居家口播，亲切自然' },
+  { value: 'balcony_garden', label: '阳台花园', desc: '阳台绿植背景，清爽明亮' },
+  { value: 'study', label: '书房书柜', desc: '书柜背景，适合知识科普' },
+  { value: 'cafe', label: '咖啡店', desc: '咖啡桌边聊天式口播' },
+  { value: 'gym', label: '健身房', desc: '运动场景，健康活力' },
+]
+const selectedScene = ref<string>('lecture')
 
-function formatDuration(sec: number) {
-  if (!sec) return '0:00'
-  const m = Math.floor(sec / 60)
-  const s = sec % 60
-  return `${m}:${s.toString().padStart(2, '0')}`
+// 从 H3 人物/场景素材库读取已选的主播照片与场景
+async function applyH3LibraryPreselect() {
+  const storedPerson = localStorage.getItem('h3_person_image')
+  if (!personImage.value && storedPerson) {
+    personImage.value = storedPerson
+    const rel = storedPerson.replace(/^storage\//, '')
+    personPreview.value = await signedMediaUrl(rel)
+  }
+  const storedScene = localStorage.getItem('h3_scene')
+  if (storedScene && sceneOptions.some(o => o.value === storedScene)) {
+    selectedScene.value = storedScene
+  }
 }
 
-function goToFootagePage() {
-  router.push('/footage')
+async function handlePortraitChange(file: any) {
+  const f = file?.raw || file
+  if (!f) return
+  if (!/image\/(jpeg|png|webp)/.test(f.type)) {
+    ElMessage.error('请上传 jpg / png / webp 格式的照片')
+    return
+  }
+  uploadingPortrait.value = true
+  try {
+    // 本地预览
+    personPreview.value = URL.createObjectURL(f)
+    const res = await uploadAnchorPortrait(f)
+    personImage.value = res.person_image
+    ElMessage.success('主播照片已上传')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '照片上传失败')
+    personImage.value = ''
+    personPreview.value = ''
+  } finally {
+    uploadingPortrait.value = false
+  }
+}
+
+function goToH3Library() {
+  saveDraft()
+  router.push('/h3-library')
 }
 
 // ===== Step 5: 生成中 =====
@@ -660,7 +792,7 @@ function backToEdit() {
 }
 
 function retryGenerate() {
-  if (!projectId || !selectedScriptId.value || !selectedVoiceId.value || !selectedFootageId.value) {
+  if (!projectId || !selectedScriptId.value || !selectedVoiceId.value || !personImage.value) {
     ElMessage.warning('信息不完整，请返回修改')
     backToEdit()
     return
@@ -681,7 +813,6 @@ function saveDraft() {
       scripts: scripts.value,
       selectedScriptId: selectedScriptId.value,
       selectedVoiceId: selectedVoiceId.value,
-      selectedFootageId: selectedFootageId.value,
       projectId,
       activeTaskId: activeTaskId.value,
       generationActive: generationActive.value,
@@ -701,7 +832,6 @@ function loadDraft() {
     if (Array.isArray(d.scripts)) scripts.value = d.scripts
     if (typeof d.selectedScriptId === 'number') selectedScriptId.value = d.selectedScriptId
     if (typeof d.selectedVoiceId === 'number') selectedVoiceId.value = d.selectedVoiceId
-    if (typeof d.selectedFootageId === 'number') selectedFootageId.value = d.selectedFootageId
     if (typeof d.projectId === 'number') projectId = d.projectId
     if (typeof d.activeTaskId === 'number') activeTaskId.value = d.activeTaskId
     if (typeof d.generationActive === 'boolean') generationActive.value = d.generationActive
@@ -720,6 +850,76 @@ function clearDraft() {
   }
 }
 
+// ===== 外部入口带参跳入 =====
+// 两处入口会往 /creation 传 query，但本页此前没有 useRoute，参数全被丢弃：
+//   · 首页「今日推荐」→ /creation?type=custom&topic=xxx  → 主题框空白，用户以为跳错了
+//   · H3 素材库    → /creation?step=3                     → 仍停在选题步
+// 这里统一消费这两个参数。
+const TOPIC_MAX = 100 // 与模板 textarea 的 maxlength 保持一致
+
+// 推荐选题自带的分类 → 本页行业类型。
+// 只有默认值「健康养生」时，美妆/母婴等选题会带着错误的行业上下文去生成文案。
+// 匹配不到就保持原值，不猜。
+const CATEGORY_TO_INDUSTRY: Array<[RegExp, string]> = [
+  [/养生|健康|中医|营养|医药/, '健康养生'],
+  [/美妆|护肤|彩妆|美容/, '美妆护肤'],
+  [/美食|餐饮|菜谱|烘焙/, '美食餐饮'],
+  [/教育|培训|学习|升学|英语/, '教育培训'],
+  [/情感|心理|两性|夫妻|生活/, '生活情感'],
+  [/职场|成长|副业|管理/, '职场成长'],
+  [/母婴|育儿|宝宝|亲子/, '母婴育儿'],
+  [/家居|收纳|装修|清洁/, '家居生活'],
+]
+
+function matchIndustry(category: string): string {
+  for (const [re, industry] of CATEGORY_TO_INDUSTRY) {
+    if (re.test(category)) return industry
+  }
+  return ''
+}
+
+function applyRouteQuery() {
+  const topic = String(route.query.topic || '').trim()
+  let resetForNewTopic = false
+
+  if (topic) {
+    const draftTopic = (formData.value.topic || '').trim()
+    // 超长标题（推荐选题常是一整句话）按输入框上限截断，避免计数器爆表
+    formData.value.topic = topic.length > TOPIC_MAX ? topic.slice(0, TOPIC_MAX) : topic
+
+    // 行业随选题一起带过来，保证 AI 拿到正确的行业上下文
+    const industry = matchIndustry(String(route.query.category || ''))
+    if (industry) formData.value.industry = industry
+
+    if (draftTopic !== topic) {
+      // 换了选题 ⇒ 这是一次新的创作。
+      // 旧项目的文案与 projectId 必须清掉，否则会出现「主题是新的、文案是旧的」错位。
+      // 声音与形象的选择和主题无关，保留下来免得用户重选。
+      scripts.value = []
+      selectedScriptId.value = null
+      projectId = null
+      activeTaskId.value = null
+      generationActive.value = false
+      currentStep.value = 0
+      clearDraft()
+      resetForNewTopic = true
+    }
+  }
+
+  // step=N 直达指定步骤。生成中的任务优先级更高（onMounted 末尾的 resumeGeneration 会覆盖），
+  // 所以这里跳过，避免把用户从进度页拽回来
+  const stepRaw = Number(route.query.step)
+  let jumpedToStep = false
+  if (!resetForNewTopic && !generationActive.value &&
+      Number.isInteger(stepRaw) && stepRaw > 0) {
+    // 最多跳到素材步（3）；「生成」步（4）只能由流程驱动
+    currentStep.value = Math.min(stepRaw, 3)
+    jumpedToStep = true
+  }
+
+  return { hasQuery: !!(route.query.topic || route.query.step), resetForNewTopic, jumpedToStep }
+}
+
 // ===== 导航控制 =====
 const canNext = computed(() => {
   switch (currentStep.value) {
@@ -736,10 +936,30 @@ const canNext = computed(() => {
         projectId !== null &&
         selectedScriptId.value !== null &&
         selectedVoiceId.value !== null &&
-        selectedFootageId.value !== null
+        !!personImage.value
       )
     default:
       return false
+  }
+})
+
+// 按钮为什么点不动 —— 不能只把按钮置灰就完事，否则用户看到的就是「点了没反应」。
+// 每一步说清当前缺什么，用户才知道该做什么。
+const nextHint = computed(() => {
+  if (canNext.value) return ''
+  switch (currentStep.value) {
+    case 0:
+      return '请先填写视频主题，再点「下一步」'
+    case 1:
+      return generatingScripts.value ? 'AI 正在生成文案，请稍候…' : '请先选择一个文案版本'
+    case 2:
+      return '请先选择或克隆一个声音'
+    case 3:
+      return !personImage.value
+        ? '请先上传一张主播照片，再点击「开始生成」'
+        : '请先返回完成前序步骤（选题 / 文案 / 声音）'
+    default:
+      return ''
   }
 })
 
@@ -748,13 +968,18 @@ function prevStep() {
     currentStep.value--
   }
 }
-
 async function nextStep() {
   if (currentStep.value === 0) {
     // 选题 → 文案：创建项目，进入文案等待态并持续轮询生成结果
     stepLoading.value = true
     try {
-      const res = await createProject('custom', formData.value.topic, formData.value.industry)
+      const res = await createProject(
+        'custom',
+        formData.value.topic,
+        formData.value.industry,
+        formData.value.platform,
+        formData.value.persona,
+      )
       projectId = res.project_id
       // 立即持久化 projectId：它是普通变量不在 watch 里，不主动存的话刷新后草稿里可能还是 null，
       // 会导致素材步「开始生成」按钮因参数不全灰死无法进行下一步
@@ -772,9 +997,9 @@ async function nextStep() {
     currentStep.value = 2
     loadVoices()
   } else if (currentStep.value === 2) {
-    // 声音 → 素材
+    // 声音 → 照片/场景
     currentStep.value = 3
-    loadFootages()
+    applyH3LibraryPreselect()
   } else if (currentStep.value === 3) {
     // 素材 → 生成
     startGeneration()
@@ -799,19 +1024,6 @@ async function loadVoices() {
   }
 }
 
-async function loadFootages() {
-  loadingFootages.value = true
-  try {
-    const res = await listFootages({ page: 1, size: 20 })
-    const payload = (res as any)?.data ?? res
-    footages.value = payload?.items || []
-  } catch (e) {
-    console.error('加载素材失败', e)
-  } finally {
-    loadingFootages.value = false
-  }
-}
-
 // ===== 视频生成 =====
 let pollTimer: number | null = null
 
@@ -829,17 +1041,28 @@ function setStepStatus(key: string, status: string) {
 }
 
 async function doGenerate() {
-  if (!projectId || !selectedScriptId.value || !selectedVoiceId.value || !selectedFootageId.value) {
+  if (!projectId || !selectedScriptId.value || !selectedVoiceId.value || !personImage.value) {
     const missing: string[] = []
     if (!projectId) missing.push('项目')
     if (!selectedScriptId.value) missing.push('文案')
     if (!selectedVoiceId.value) missing.push('声音')
-    if (!selectedFootageId.value) missing.push('素材')
+    if (!personImage.value) missing.push('主播照片')
     ElMessage.error(`生成所需参数不完整，缺少：${missing.join('、')}`)
     return
   }
 
   try {
+    // H3 主链路没有独立配音/口型步骤，进度按 文案→画面→字幕 展示
+    generateSteps.value = personImage.value ? [
+      { key: 'script', label: '生成文案', status: 'pending' },
+      { key: 'h3', label: '生成画面', status: 'pending' },
+      { key: 'subtitle', label: '合成字幕', status: 'pending' },
+    ] : [
+      { key: 'script', label: '生成文案', status: 'pending' },
+      { key: 'tts', label: '生成配音', status: 'pending' },
+      { key: 'lipsync', label: '对齐口型', status: 'pending' },
+      { key: 'render', label: '合成视频', status: 'pending' },
+    ]
     // 第一步文案已经在 step2 生成过了，标记为完成
     setStepStatus('script', 'done')
 
@@ -847,8 +1070,12 @@ async function doGenerate() {
     const res = await generateVideo(projectId, {
       script_id: selectedScriptId.value,
       voice_profile_id: selectedVoiceId.value,
-      footage_id: selectedFootageId.value,
-      with_lipsync: true,
+      with_lipsync: false,
+      person_image: personImage.value,
+      scene: selectedScene.value,
+      anchor_image: localStorage.getItem('h3_anchor_image') || undefined,
+      width: 512,
+      height: 960,
     })
     const taskId = res.task_id
 
@@ -867,9 +1094,9 @@ async function doGenerate() {
 }
 
 function startPolling(taskId: number) {
-  if (pollTimer) clearInterval(pollTimer)
+  if (pollTimer) clearTimeout(pollTimer)
 
-  pollTimer = window.setInterval(async () => {
+  const tick = async () => {
     try {
       const status = await getTaskStatus(taskId)
 
@@ -893,11 +1120,21 @@ function startPolling(taskId: number) {
         return
       }
 
-      if (p >= 5) setStepStatus('tts', 'doing')
-      if (p >= 25) setStepStatus('tts', 'done')
-      if (p >= 25) setStepStatus('lipsync', 'doing')
-      if (p >= 55) setStepStatus('lipsync', 'done')
-      if (p >= 55) setStepStatus('render', 'doing')
+      if (personImage.value) {
+        // H3: 5% 准备文案 -> 15% 生成画面 -> 90% 合成字幕 -> 100% 完成
+        if (p >= 15) setStepStatus('script', 'done')
+        if (p >= 15) setStepStatus('h3', 'doing')
+        if (p >= 90) {
+          setStepStatus('h3', 'done')
+          setStepStatus('subtitle', 'doing')
+        }
+      } else {
+        if (p >= 5) setStepStatus('tts', 'doing')
+        if (p >= 25) setStepStatus('tts', 'done')
+        if (p >= 25) setStepStatus('lipsync', 'doing')
+        if (p >= 55) setStepStatus('lipsync', 'done')
+        if (p >= 55) setStepStatus('render', 'doing')
+      }
 
       if (status.status === 'completed' || p >= 100) {
         setStepStatus('render', 'done')
@@ -917,7 +1154,11 @@ function startPolling(taskId: number) {
     } catch (e) {
       console.error('轮询失败', e)
     }
-  }, 2000)
+    if (pollTimer !== null) {
+      pollTimer = window.setTimeout(tick, pollDelayMs(5000))
+    }
+  }
+  pollTimer = window.setTimeout(tick, pollDelayMs(5000))
 }
 
 function stopPolling() {
@@ -929,10 +1170,16 @@ function stopPolling() {
 
 onMounted(() => {
   const restored = loadDraft()
-  if (restored) {
-    // 恢复后补齐对应步骤的列表数据，使已选声音/素材可见
-    if (currentStep.value >= 2) loadVoices()
-    if (currentStep.value >= 3) loadFootages()
+
+  // 外部带参跳入必须放在草稿恢复之后：同一选题延续进度，换了选题则开一次新的创作
+  const nav = applyRouteQuery()
+
+  // 按最终所在步骤补齐列表数据，使已选声音可见
+  if (currentStep.value >= 2) loadVoices()
+
+  if (nav.resetForNewTopic) {
+    ElMessage.success('已填入推荐选题，确认后点「下一步」')
+  } else if (restored) {
     // 兜底：恢复后若文案列表已有但未选中（草稿 selectedScriptId 丢失），自动选第一个，
     // 否则「开始生成」按钮会因参数不全一直灰着无法进行下一步
     if (scripts.value.length > 0 && selectedScriptId.value == null) {
@@ -943,9 +1190,16 @@ onMounted(() => {
       pollScripts()
     }
   }
+
   // 刷新/离开页面后，若仍有进行中的生成任务，自动恢复轮询并跳结果页
   if (generationActive.value && activeTaskId.value) {
     resumeGeneration(activeTaskId.value)
+  }
+  applyH3LibraryPreselect()
+
+  // 一次性跳转参数消费完即清，避免刷新时重复触发
+  if (nav.hasQuery) {
+    router.replace({ path: '/creation' })
   }
 })
 
@@ -966,7 +1220,7 @@ onUnmounted(() => {
 })
 
 watch(
-  [formData, currentStep, selectedScriptId, selectedVoiceId, selectedFootageId, scripts],
+  [formData, currentStep, selectedScriptId, selectedVoiceId, scripts],
   () => saveDraft(),
   { deep: true },
 )
@@ -1076,6 +1330,9 @@ watch(
   color: #909399;
   margin-bottom: 20px;
 }
+.voice-step-header {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+}
 
 /* 表单卡片 */
 .form-card {
@@ -1100,6 +1357,16 @@ watch(
   color: #303133;
   margin-bottom: 8px;
 }
+.persona-tags {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
+}
+.persona-tag {
+  background: #f5f7fa; color: #606266; border: 1px solid #dcdfe6;
+  border-radius: 14px; padding: 4px 12px; font-size: 13px;
+  cursor: pointer; transition: all .15s;
+}
+.persona-tag:hover { border-color: #409eff; color: #409eff; background: #ecf5ff; }
+.persona-tag.active { border-color: #409eff; color: #fff; background: #409eff; }
 
 .goal-options {
   display: grid;
@@ -1333,65 +1600,10 @@ watch(
   line-height: 1.5;
 }
 
-/* 素材网格 */
-.footage-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
-
-.footage-card {
-  position: relative;
-  border-radius: 10px;
-  overflow: hidden;
-  cursor: pointer;
-  border: 2px solid transparent;
-  transition: all 0.2s;
-  background: #fff;
-}
-
-.footage-card.active {
-  border-color: #667eea;
-}
-
-.footage-cover {
-  position: relative;
-  aspect-ratio: 9 / 16;
-  background: linear-gradient(135deg, #667eea20, #764ba220);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #667eea;
-}
-
-.footage-cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.footage-placeholder {
-  opacity: 0.5;
-}
-
-.footage-duration {
-  position: absolute;
-  bottom: 6px;
-  right: 6px;
-  background: rgba(0, 0, 0, 0.6);
-  color: #fff;
-  font-size: 11px;
-  padding: 2px 6px;
-  border-radius: 4px;
-}
-
-.footage-name {
-  padding: 6px 8px;
-  font-size: 12px;
-  color: #606266;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* 人物/场景素材库入口 */
+.library-link {
+  text-align: center;
+  margin: 10px 0 0;
 }
 
 .footage-check {
@@ -1408,6 +1620,27 @@ watch(
   justify-content: center;
   font-size: 12px;
 }
+
+.portrait-uploader { display:flex; justify-content:center; margin-bottom:24px; }
+.portrait-box {
+  width: 220px; height: 300px; border-radius: 16px; border: 2px dashed #c0c4cc;
+  display:flex; align-items:center; justify-content:center; overflow:hidden;
+  position:relative; cursor:pointer; background:#fafafa; transition:border-color .2s;
+}
+.portrait-box:hover, .portrait-box.active { border-color:#667eea; }
+.portrait-img { width:100%; height:100%; object-fit:cover; }
+.portrait-empty { text-align:center; color:#909399; padding:0 12px; }
+.portrait-mask { position:absolute; inset:0; background:rgba(255,255,255,.7); display:flex; align-items:center; justify-content:center; }
+.scene-title { font-size:16px; font-weight:600; margin:8px 0 12px; text-align:center; }
+.scene-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.scene-card {
+  position:relative; border:2px solid #e4e7ed; border-radius:12px; padding:16px; cursor:pointer;
+  transition:all .2s; background:#fff;
+}
+.scene-card:hover { border-color:#a3aef5; }
+.scene-card.active { border-color:#667eea; background:#f5f7ff; }
+.scene-label { font-weight:600; font-size:15px; margin-bottom:4px; }
+.scene-desc { font-size:12px; color:#909399; }
 
 .upload-hint {
   margin-top: 16px;

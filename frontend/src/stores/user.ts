@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { login as loginApi, register as registerApi, getCurrentUser } from '@/api/auth'
+import { login as loginApi, register as registerApi, getCurrentUser, wechatCallback } from '@/api/auth'
 import type { User, LoginResponse } from '@/types/user'
 
 const mockUsers: Record<string, User> = {
@@ -45,6 +45,14 @@ export const useUserStore = defineStore('user', () => {
     return res
   }
 
+  async function loginWithWechat(code: string) {
+    const res = await wechatCallback(code)
+    token.value = res.token
+    userInfo.value = res.user
+    localStorage.setItem('token', res.token)
+    return res
+  }
+
   async function fetchUserInfo() {
     if (!token.value) return null
     try {
@@ -69,6 +77,7 @@ export const useUserStore = defineStore('user', () => {
     isLoggedIn,
     login,
     register,
+    loginWithWechat,
     fetchUserInfo,
     logout,
   }

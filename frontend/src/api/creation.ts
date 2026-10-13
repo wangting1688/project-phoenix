@@ -33,6 +33,11 @@ export interface Script {
   content: string
   version: number
   score?: string
+  meta?: {
+    emphasis?: string[]
+    hooks?: string[]
+    is_hot?: boolean
+  }
 }
 
 export interface VideoInfo {
@@ -57,8 +62,11 @@ export interface TaskStatus {
   eta_seconds?: number | null
 }
 
-export function createProject(source_type: string, topic: string, category?: string) {
-  return request.post<unknown, { project_id: number; task_id: number; status: string }>('/creation/projects', { source_type, topic, category })
+export function createProject(source_type: string, topic: string, category?: string, platform?: string, persona?: string) {
+  return request.post<unknown, { project_id: number; task_id: number; status: string }>(
+    '/creation/projects',
+    { source_type, topic, category, platform, persona },
+  )
 }
 
 export function listProjects(page = 1, size = 20) {
@@ -98,4 +106,15 @@ export function getTaskScripts(task_id: number) {
 
 export function updateScript(script_id: number, content: string) {
   return request.patch<unknown, Script>(`/creation/scripts/${script_id}`, { content })
+}
+
+export function reReviewScript(project_id: number, script_id: number, content: string) {
+  return request.post<unknown, { pass: boolean; problems: string[] }>(
+    `/creation/projects/${project_id}/scripts/${script_id}/re-review`,
+    { content },
+  )
+}
+
+export function markScriptHot(script_id: number) {
+  return request.post<unknown, Script>(`/creation/scripts/${script_id}/mark-hot`)
 }

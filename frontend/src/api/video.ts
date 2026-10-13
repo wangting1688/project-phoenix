@@ -99,7 +99,12 @@ export interface VideoPlanInfo {
 
 export function composeVideo(projectId: number, scriptId?: number) {
   const params = scriptId ? { script_id: scriptId } : {}
-  return request.post<unknown, ComposeResult>(`/video/compose/${projectId}`, null, { params })
+  // 缺素材时后端返回 code=400 + data.need_footage，由调用方给出「去上传素材」引导，
+  // 所以关掉默认的全局红字提示，避免双重弹窗
+  return request.post<unknown, ComposeResult>(`/video/compose/${projectId}`, null, {
+    params,
+    skipErrorToast: true,
+  } as any)
 }
 
 export function getVideoPlan(projectId: number) {
@@ -120,10 +125,18 @@ export function renderVideo(projectId: number, plan: CompositionPlan, scriptText
 }
 
 export interface GenerateVideoParams {
-  script_id: number
-  voice_profile_id: number
-  footage_id: number
+  script_id?: number | null
+  voice_profile_id?: number | null
+  footage_id?: number | null
   with_lipsync?: boolean
+  // H3 图生视频（传主播照片+场景即可，无需实拍素材）
+  person_image?: string | null
+  scene?: string
+  anchor_image?: string | null
+  hair_hint?: string
+  width?: number | null
+  height?: number | null
+  seed?: number
 }
 
 export interface GenerateTaskResponse {

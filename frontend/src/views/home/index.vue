@@ -104,6 +104,17 @@
           <el-empty description="还没有作品，开始创作吧！" />
         </div>
       </div>
+
+      <div class="section">
+        <div class="workbench-entry card" @click="$router.push('/workbench')">
+          <el-icon :size="22" class="entry-icon"><ISetting /></el-icon>
+          <div class="entry-text">
+            <h4>AI 工作台</h4>
+            <p>内容增长 / 拍摄制作 / 更多工具</p>
+          </div>
+          <el-icon :size="16" class="arrow"><IArrowRight /></el-icon>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -115,6 +126,7 @@ import {
   IArrowRight,
   IVideoCamera,
   ICheck,
+  ISetting,
 } from '@/utils/icons'
 import { useUserStore } from '@/stores/user'
 import { getRecommendations, type ContentOpportunity } from '@/api/contentHub'
@@ -229,9 +241,15 @@ async function loadPipelineExtras() {
 }
 
 function selectRecommend(item: ContentOpportunity) {
+  // 把选题与分类一并带到创作页：创作页据此预填主题、对齐行业上下文
+  // （此前只跳转不带参，创作页也没读 query，结果主题框是空的）
   router.push({
     path: '/creation',
-    query: { type: 'custom', topic: item.title },
+    query: {
+      type: 'custom',
+      topic: item.title,
+      category: item.category || '',
+    },
   })
 }
 
@@ -532,5 +550,37 @@ function getStatusText(status: string) {
   background: #fff;
   border-radius: 12px;
   padding: 40px 20px;
+}
+
+.workbench-entry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.entry-icon {
+  color: #667eea;
+  flex-shrink: 0;
+}
+
+.entry-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.entry-text h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.entry-text p {
+  font-size: 12px;
+  color: #909399;
+}
+
+.workbench-entry .arrow {
+  color: #909399;
 }
 </style>

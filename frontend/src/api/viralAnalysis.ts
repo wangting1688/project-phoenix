@@ -8,6 +8,10 @@ export interface AnalysisBasicInfo {
   comment_count: number
   share_count: number
   collect_count: number
+  transcript?: string
+  cover_url?: string
+  video_id?: string
+  data_source?: string
 }
 
 export interface ContentStructure {
