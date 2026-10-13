@@ -327,12 +327,15 @@ import { composeVideo, renderVideo, type ComposeResult } from '@/api/video'
 import { getVoiceProfiles, type VoiceProfile } from '@/api/voiceProfile'
 import { useUserStore } from '@/stores/user'
 import { resolveMediaUrls, storagePathOf } from '@/utils/mediaUrl'
+import { normalizeStatus } from '@/utils/status'
 
 const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 
-const taskId = Number(route.query.task_id || 0)
+// task_id 有两个来源：URL（?task_id=）与项目详情（作品页「查看进度」跳进来时
+// 只带 project_id，项目接口会把它的主任务 id 一并返回）。所以这里必须是 ref。
+const taskId = ref(Number(route.query.task_id || 0))
 const projectIdQuery = Number(route.query.project_id || 0)
 const projectId = ref<number | null>(null)
 const project = ref<(ContentProject & { video_url?: string | null; video_duration?: number | null }) | null>(null)
@@ -380,6 +383,31 @@ async function refreshMediaUrls() {
     : null
   previewSrc.value = footagePath ? map[footagePath] || null : null
 }
+
+/**
+ * 把项目详情应用到页面状态（视频字段 + 媒体签名 URL）。
+ *
+ * 首屏加载与轮询结束时都走这里，避免两处各写一份、日后漂移。
+ */
+async function applyProjectDetail(proj: any) {
+  project.value = proj
+  if (!proj?.video_url) return
+  renderedVideo.value = {
+    video_id: proj.id,
+    output_url: proj.video_url,
+    duration: proj.video_duration,
+  }
+  video.value = {
+    id: proj.id,
+    project_id: proj.id,
+    url: proj.video_url,
+    cover_url: proj.cover_url,
+    duration: proj.video_duration,
+    status: proj.video_status || 'rendered',
+  }
+  await refreshMediaUrls()
+}
+
 const editContent = ref('')
 const savingScript = ref(false)
 const reReviewing = ref(false)
@@ -408,13 +436,20 @@ const workflowSteps = [
 ]
 
 const taskProgress = computed(() => taskStatus.value?.progress || 0)
+
+/**
+ * 项目自身的展示状态（已归一）。历史数据里 status 可能是 "ready" 这类不在
+ * 枚举内的值，直接拿去比对会被判成「未完成」，页面就一直卡在进度条上。
+ */
+const projectStatus = computed(() =>
+  normalizeStatus(project.value?.display_status || (project.value as any)?.status)
+)
 const completed = computed(() =>
   taskStatus.value?.status === 'completed' ||
-  project.value?.status === 'completed' ||
-  project.value?.display_status === 'completed' ||
-  project.value?.workflow_status === 'completed'
+  projectStatus.value === 'plan_ready' ||
+  projectStatus.value === 'video_ready'
 )
-const failed = computed(() => taskStatus.value?.status === 'failed' || project.value?.status === 'failed')
+const failed = computed(() => taskStatus.value?.status === 'failed' || projectStatus.value === 'failed')
 const failReason = computed(
   () => taskStatus.value?.error_message || '创作流程执行失败，请稍后重试'
 )
@@ -424,30 +459,14 @@ const progressColor = computed(() => {
 })
 
 onMounted(async () => {
-  if (taskId) {
+  if (taskId.value) {
     pollStatus()
   } else if (projectIdQuery) {
     // 从作品列表跳过来的，加载项目详情 + 脚本 + 视频
     try {
       const proj = await getProject(projectIdQuery)
       projectId.value = projectIdQuery
-      project.value = proj
-      if (proj?.video_url) {
-        renderedVideo.value = {
-          video_id: proj.id,
-          output_url: proj.video_url,
-          duration: proj.video_duration
-        }
-        video.value = {
-          id: proj.id,
-          project_id: proj.id,
-          url: proj.video_url,
-          cover_url: (proj as any).cover_url,
-          duration: proj.video_duration,
-          status: (proj as any).video_status || 'rendered',
-        }
-        await refreshMediaUrls()
-      }
+      await applyProjectDetail(proj)
       // 加载文案脚本
       try {
         const scriptList = await getProjectScripts(projectIdQuery)
@@ -465,6 +484,19 @@ onMounted(async () => {
       // 创作完成后填充运营方案：project 分支不会走 pollStatus，必须在此主动加载，
       // 否则「运营方案」区块虽因 completed=true 显示，但标题/标签等内容恒为空（V1 默认数据）。
       loadOperationData()
+
+      // 项目仍在创作中就必须轮询，否则进度条永远停在 0%「AI正在创作中」，
+      // 用户从作品页点「查看进度」跳进来看到的就是这样一个死页面。
+      if (projectStatus.value === 'processing') {
+        const tid = Number((proj as any)?.task_id || 0)
+        if (tid) {
+          taskId.value = tid
+          pollStatus(tid)
+        } else {
+          // 兜底：历史项目可能没有关联的任务记录，就直接轮询项目本身。
+          pollProjectProgress()
+        }
+      }
     } catch (e) {
       console.error('加载项目失败:', e)
     }
@@ -489,12 +521,13 @@ function pollDelayMs(): number {
   return document.visibilityState === 'hidden' ? 30000 : 5000
 }
 
-async function pollStatus() {
+async function pollStatus(id: number = taskId.value) {
+  if (!id) return
   try {
-    const status = await getTaskStatus(taskId)
+    const status = await getTaskStatus(id)
     taskStatus.value = status as any
 
-    const result = await getTaskResult(taskId)
+    const result = await getTaskResult(id)
     if (result) {
       scripts.value = (result as any).scripts || []
       video.value = (result as any).video || null
@@ -503,19 +536,65 @@ async function pollStatus() {
     }
 
     if (status?.status === 'completed') {
+      // 任务结束时回读一次项目：结果接口里没有成片/封面字段，成片要往项目上取。
+      await reloadProject()
       loadOperationData()
       return
     }
     // 失败时必须停止轮询, 否则页面永远停在"AI正在创作中"
     if (status?.status === 'failed') {
+      await reloadProject()
       return
     }
 
-    pollTimer = window.setTimeout(pollStatus, pollDelayMs())
+    pollTimer = window.setTimeout(() => pollStatus(id), pollDelayMs())
   } catch (e) {
     console.error('轮询失败', e)
-    pollTimer = window.setTimeout(pollStatus, pollDelayMs())
+    pollTimer = window.setTimeout(() => pollStatus(id), pollDelayMs())
   }
+}
+
+/** 重新拉一次项目详情（轮询结束时用，让成片/状态及时到位）。 */
+async function reloadProject() {
+  const pid = projectId.value
+  if (!pid) return
+  try {
+    const proj = await getProject(pid)
+    await applyProjectDetail(proj)
+    // 任务刚完成时脚本可能刚落库，这里补一次，别让页面停在旧数据上
+    if (!scripts.value.length) {
+      try {
+        scripts.value = (await getProjectScripts(pid)) || []
+      } catch { /* 脚本拉取失败不影响进度展示 */ }
+    }
+  } catch (e) {
+    console.error('回读项目失败', e)
+  }
+}
+
+/**
+ * 没有任务记录时的兜底轮询：按固定间隔重取项目详情，直到它不再是「生成中」。
+ *
+ * 比任务轮询粗糙（拿不到分步进度），但至少能让页面自己走到完成/失败态 ——
+ * 而不是永远停在 0%「AI正在创作中」。
+ */
+async function pollProjectProgress() {
+  const pid = projectId.value
+  if (!pid) return
+  try {
+    const proj = await getProject(pid)
+    await applyProjectDetail(proj)
+    if (projectStatus.value !== 'processing') {
+      try {
+        scripts.value = (await getProjectScripts(pid)) || []
+      } catch { /* 同上 */ }
+      loadOperationData()
+      return
+    }
+  } catch (e) {
+    console.error('轮询项目进度失败', e)
+  }
+  pollTimer = window.setTimeout(pollProjectProgress, pollDelayMs())
 }
 
 async function loadOperationData() {

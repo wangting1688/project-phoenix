@@ -43,23 +43,23 @@
             />
             <div v-else class="cover-placeholder">
               <el-icon :size="40"><IVideoCamera /></el-icon>
-              <span class="cover-hint">{{ getCoverHint(work) }}</span>
+              <span class="cover-hint">{{ coverHint(workStatus(work)) }}</span>
             </div>
 
             <!-- 状态遮罩 -->
-            <div v-if="work.display_status === 'processing'" class="status-overlay processing">
+            <div v-if="workStatus(work) === 'processing'" class="status-overlay processing">
               <el-icon class="loading-icon" :size="28"><ILoading /></el-icon>
               <span>生成中...</span>
             </div>
-            <div v-else-if="work.display_status === 'failed'" class="status-overlay failed">
+            <div v-else-if="workStatus(work) === 'failed'" class="status-overlay failed">
               <el-icon :size="28"><ICircleClose /></el-icon>
               <span>生成失败</span>
             </div>
-            <div v-else-if="work.display_status === 'plan_ready'" class="status-overlay plan-ready">
+            <div v-else-if="workStatus(work) === 'plan_ready'" class="status-overlay plan-ready">
               <el-icon :size="28"><IDocument /></el-icon>
               <span>方案已完成</span>
             </div>
-            <div v-else-if="work.display_status === 'video_ready'" class="play-btn">
+            <div v-else-if="workStatus(work) === 'video_ready'" class="play-btn">
               <el-icon :size="36"><IVideoPlay /></el-icon>
             </div>
           </div>
@@ -68,15 +68,15 @@
           <div class="work-info">
             <h4 class="work-title">{{ work.topic || '未命名作品' }}</h4>
             <div class="work-meta">
-              <span class="status" :class="work.display_status || work.status">
-                {{ getStatusText(work.display_status || work.status) }}
+              <span class="status" :class="workStatus(work)">
+                {{ statusText(workStatus(work)) }}
               </span>
               <span class="date">{{ formatDate(work.created_at) }}</span>
             </div>
 
             <!-- 操作按钮区域 -->
             <div class="work-actions">
-              <template v-if="work.display_status === 'video_ready'">
+              <template v-if="workStatus(work) === 'video_ready'">
                 <a
                   v-if="work.video_url"
                   :href="videoSrcMap[work.id]"
@@ -97,7 +97,7 @@
                 </el-button>
               </template>
 
-              <template v-else-if="work.display_status === 'plan_ready'">
+              <template v-else-if="workStatus(work) === 'plan_ready'">
                 <el-button
                   size="small"
                   type="primary"
@@ -118,7 +118,7 @@
                 </el-button>
               </template>
 
-              <template v-else-if="work.display_status === 'processing'">
+              <template v-else-if="workStatus(work) === 'processing'">
                 <el-button
                   size="small"
                   type="primary"
@@ -130,7 +130,7 @@
                 </el-button>
               </template>
 
-              <template v-else-if="work.display_status === 'failed'">
+              <template v-else-if="workStatus(work) === 'failed'">
                 <el-button
                   size="small"
                   type="primary"
@@ -194,6 +194,7 @@ import {
 import { getProjects, deleteProject, type ContentProject } from '@/api/creation'
 import { useUserStore } from '@/stores/user'
 import { resolveMediaUrls } from '@/utils/mediaUrl'
+import { normalizeStatus, statusText, coverHint } from '@/utils/status'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -215,32 +216,19 @@ const works = ref<ContentProject[]>([])
 
 const filteredWorks = computed(() => {
   if (activeTab.value === 'all') return works.value
-  return works.value.filter(w => (w.display_status || w.status) === activeTab.value)
+  return works.value.filter(w => workStatus(w) === activeTab.value)
 })
 
-function getStatusText(status: string) {
-  const map: Record<string, string> = {
-    draft: '草稿',
-    processing: '生成中',
-    plan_ready: '方案完成',
-    rendering: '渲染中',
-    video_ready: '视频完成',
-    completed: '已完成',
-    failed: '失败',
-  }
-  return map[status] || status
-}
-
-function getCoverHint(work: ContentProject) {
-  const map: Record<string, string> = {
-    draft: '草稿',
-    processing: 'AI创作中',
-    plan_ready: '等待生成视频',
-    rendering: '视频渲染中',
-    video_ready: '点击播放',
-    failed: '生成失败',
-  }
-  return map[work.display_status || work.status] || '暂无封面'
+/**
+ * 作品的展示状态：优先 display_status，缺失时回落到 status，并统一归一。
+ *
+ * 归一很关键 —— 历史数据里存在 "ready" 这类不在前端枚举内的值（早期
+ * creation_studio 链路写入）。直接拿去比 v-if 的结果是：状态标签原样显示
+ * 英文 "ready"，且所有按钮分支都不匹配，卡片上只剩一个「删除」。
+ * 详见 utils/status.ts。
+ */
+function workStatus(work: ContentProject) {
+  return normalizeStatus(work.display_status || work.status)
 }
 
 function formatDate(dateStr: string) {
@@ -250,7 +238,7 @@ function formatDate(dateStr: string) {
 }
 
 function viewWork(work: ContentProject) {
-  const status = work.display_status || work.status
+  const status = workStatus(work)
   if (status === 'plan_ready') {
     // 只出了方案、还没成片的作品：直接带去创作页，用「照片 + 场景」生成。
     // 原来跳的是老结果页的自动生成（compose → 渲染），那条链路依赖实拍

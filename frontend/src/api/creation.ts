@@ -16,6 +16,8 @@ export interface ContentProject {
   category?: string
   status: string
   workflow_status?: string
+  /** 该项目的主创作任务 id，结果页据此轮询进度 */
+  task_id?: number | null
   video_url?: string | null
   video_duration?: number | null
   video_status?: string | null
